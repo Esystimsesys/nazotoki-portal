@@ -1,0 +1,521 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  nazotoki-portal - Lambda functions (business-domain split, per
+  docs/01-api-contract.md) + HTTP API (API Gateway v2). Unlike ekiden-portal,
+  there is no Cognito stack and no native JWT authorizer: every route is
+  AuthorizationType NONE and passes straight through to its Lambda, which
+  performs its own HS256 JWT verification against the shared JWT_SECRET
+  (backend/shared/auth.ts). Depends on outputs from the dynamodb stack
+  (table names/ARNs).
+
+Parameters:
+  TeamsTableName:
+    Type: String
+  TeamsTableArn:
+    Type: String
+  ProblemsTableName:
+    Type: String
+  ProblemsTableArn:
+    Type: String
+  SubmissionsTableName:
+    Type: String
+  SubmissionsTableArn:
+    Type: String
+  AdminsTableName:
+    Type: String
+  AdminsTableArn:
+    Type: String
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    Description: >
+      Shared HS256 secret used by every Lambda to sign/verify JWTs
+      (backend/shared/auth.ts). Required - no default, so an accidental
+      redeploy cannot silently rotate it. Generate once with
+      `openssl rand -hex 32` and reuse the same value on every deploy.sh run
+      (see cloudformation/README.md).
+  LambdaLogRetentionDays:
+    Type: Number
+    Default: 30
+
+Resources:
+  # ---------------------------------------------------------------------
+  # IAM - one execution role per function, scoped only to the table(s) that
+  # function's environment variables reference (least privilege; see the
+  # per-function env var table in docs/01-api-contract.md).
+  # ---------------------------------------------------------------------
+  adminAuthExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: nazotoki-admin-auth-exec-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: admins-table-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource:
+                  - !Ref AdminsTableArn
+                  - !Sub "${AdminsTableArn}/index/*"
+
+  teamsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: nazotoki-teams-exec-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: teams-table-crud
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !Ref TeamsTableArn
+                  - !Sub "${TeamsTableArn}/index/*"
+
+  problemsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: nazotoki-problems-exec-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: problems-table-crud
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !Ref ProblemsTableArn
+
+  submissionsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: nazotoki-submissions-exec-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: submissions-table-crud
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !Ref SubmissionsTableArn
+        - PolicyName: problems-and-teams-table-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !Ref ProblemsTableArn
+                  - !Ref TeamsTableArn
+                  - !Sub "${TeamsTableArn}/index/*"
+
+  # ---------------------------------------------------------------------
+  # Log groups (explicit, 30-day retention, created ahead of the functions)
+  # ---------------------------------------------------------------------
+  adminAuthLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/nazotoki-admin-auth
+      RetentionInDays: !Ref LambdaLogRetentionDays
+  teamsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/nazotoki-teams
+      RetentionInDays: !Ref LambdaLogRetentionDays
+  problemsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/nazotoki-problems
+      RetentionInDays: !Ref LambdaLogRetentionDays
+  submissionsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/nazotoki-submissions
+      RetentionInDays: !Ref LambdaLogRetentionDays
+
+  # ---------------------------------------------------------------------
+  # Lambda functions. Code uses the rain-only "!Rain::S3" directive: per
+  # rain's implementation (cft/pkg/directives.go), "Run" is a path (relative
+  # to this template's directory) to an executable script that rain runs
+  # with cwd = this template's directory before zipping "Path". The build
+  # script bundles each function with esbuild into
+  # backend/functions/<name>/dist (docs/01-api-contract.md build convention).
+  # cfn-lint cannot parse the rain-only tag - see cloudformation/README.md
+  # "cfn-lint" section for the lint workaround.
+  # ---------------------------------------------------------------------
+  adminAuthFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: adminAuthLogGroup
+    Properties:
+      FunctionName: nazotoki-admin-auth
+      Runtime: nodejs24.x
+      Handler: index.handler
+      Role: !GetAtt adminAuthExecutionRole.Arn
+      Timeout: 10
+      MemorySize: 256
+      Code: !Rain::S3
+        Path: ../../../backend/functions/admin-auth/dist
+        Run: ../../scripts/build-backend.sh
+        BucketProperty: S3Bucket
+        KeyProperty: S3Key
+      Environment:
+        Variables:
+          TABLE_ADMINS: !Ref AdminsTableName
+          JWT_SECRET: !Ref JwtSecret
+
+  teamsFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: teamsLogGroup
+    Properties:
+      FunctionName: nazotoki-teams
+      Runtime: nodejs24.x
+      Handler: index.handler
+      Role: !GetAtt teamsExecutionRole.Arn
+      Timeout: 10
+      MemorySize: 256
+      Code: !Rain::S3
+        Path: ../../../backend/functions/teams/dist
+        Run: ../../scripts/build-backend.sh
+        BucketProperty: S3Bucket
+        KeyProperty: S3Key
+      Environment:
+        Variables:
+          TABLE_TEAMS: !Ref TeamsTableName
+          JWT_SECRET: !Ref JwtSecret
+
+  problemsFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: problemsLogGroup
+    Properties:
+      FunctionName: nazotoki-problems
+      Runtime: nodejs24.x
+      Handler: index.handler
+      Role: !GetAtt problemsExecutionRole.Arn
+      Timeout: 15
+      MemorySize: 256
+      Code: !Rain::S3
+        Path: ../../../backend/functions/problems/dist
+        Run: ../../scripts/build-backend.sh
+        BucketProperty: S3Bucket
+        KeyProperty: S3Key
+      Environment:
+        Variables:
+          TABLE_PROBLEMS: !Ref ProblemsTableName
+          JWT_SECRET: !Ref JwtSecret
+
+  submissionsFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: submissionsLogGroup
+    Properties:
+      FunctionName: nazotoki-submissions
+      Runtime: nodejs24.x
+      Handler: index.handler
+      Role: !GetAtt submissionsExecutionRole.Arn
+      Timeout: 15
+      MemorySize: 256
+      Code: !Rain::S3
+        Path: ../../../backend/functions/submissions/dist
+        Run: ../../scripts/build-backend.sh
+        BucketProperty: S3Bucket
+        KeyProperty: S3Key
+      Environment:
+        Variables:
+          TABLE_SUBMISSIONS: !Ref SubmissionsTableName
+          TABLE_PROBLEMS: !Ref ProblemsTableName
+          TABLE_TEAMS: !Ref TeamsTableName
+          JWT_SECRET: !Ref JwtSecret
+
+  # ---------------------------------------------------------------------
+  # HTTP API. No native JWT authorizer (Cognito is not used in this
+  # project - see docs/00-design.md); every route is AuthorizationType NONE
+  # and each Lambda validates the Authorization: Bearer JWT itself via
+  # backend/shared/auth.ts's requireAuth(event, role?).
+  # ---------------------------------------------------------------------
+  httpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: nazotoki-http-api
+      ProtocolType: HTTP
+
+  httpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref httpApi
+      StageName: $default
+      AutoDeploy: true
+      # スロットリング: 追加料金なしでリクエスト量に上限を設ける。
+      # 目的はコストの上限を固定すること（暴走したクライアントやスクリプトによる
+      # Lambda呼び出し・DynamoDB読み取りの青天井な増加を防ぐ）。
+      # 数百人規模の社内イベントの実利用（全チーム合計でも数req/s程度）に対して
+      # 十分な余裕がある値にしてあるため、通常の回答操作が弾かれることはない。
+      # なお回答の総当たりに対する抑止はアプリ側では行わず、ゲームデザイン側
+      # （不正解パターンにマイナス賞金を設定できること）に委ねる方針のため、
+      # ここはゲーム性の担保ではなくあくまでシステム全体の流量・コスト上限。
+      DefaultRouteSettings:
+        ThrottlingRateLimit: 50
+        ThrottlingBurstLimit: 100
+
+  # --- Integrations (one per function; each function may serve several routes) ---
+  adminAuthIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref httpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt adminAuthFunction.Arn
+      PayloadFormatVersion: "2.0"
+      TimeoutInMillis: 10000
+
+  teamsIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref httpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt teamsFunction.Arn
+      PayloadFormatVersion: "2.0"
+      TimeoutInMillis: 10000
+
+  problemsIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref httpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt problemsFunction.Arn
+      PayloadFormatVersion: "2.0"
+      TimeoutInMillis: 15000
+
+  submissionsIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref httpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt submissionsFunction.Arn
+      PayloadFormatVersion: "2.0"
+      TimeoutInMillis: 15000
+
+  # --- Lambda invoke permissions (one per function, wildcard route/stage) ---
+  adminAuthInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref adminAuthFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${httpApi}/*/*
+
+  teamsInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref teamsFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${httpApi}/*/*
+
+  problemsInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref problemsFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${httpApi}/*/*
+
+  submissionsInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref submissionsFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${httpApi}/*/*
+
+  # --- Routes: admin-auth ---
+  routeAdminLogin:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "POST /api/admin/login"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${adminAuthIntegration}
+
+  # --- Routes: teams ---
+  routeTeamLogin:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "POST /api/auth/team-login"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${teamsIntegration}
+  routeAdminTeamsList:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "GET /api/admin/teams"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${teamsIntegration}
+  routeAdminTeamsCreate:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "POST /api/admin/teams"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${teamsIntegration}
+  routeAdminTeamsDelete:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "DELETE /api/admin/teams/{teamId}"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${teamsIntegration}
+  routeAdminTeamsRegenerateCode:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "POST /api/admin/teams/{teamId}/regenerate-code"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${teamsIntegration}
+
+  # --- Routes: problems ---
+  routeAdminProblemsList:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "GET /api/admin/problems"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${problemsIntegration}
+  routeAdminProblemsCreate:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "POST /api/admin/problems"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${problemsIntegration}
+  routeAdminProblemsUpdate:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "PUT /api/admin/problems/{problemId}"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${problemsIntegration}
+  routeAdminProblemsDelete:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "DELETE /api/admin/problems/{problemId}"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${problemsIntegration}
+  routeAdminProblemsEnabledOne:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "PUT /api/admin/problems/{problemId}/enabled"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${problemsIntegration}
+  routeAdminProblemsEnabledBulk:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      # Literal path segment "enabled" takes precedence over the
+      # {problemId} path-variable route above at the same position
+      # (HTTP API route resolution prefers the most specific match).
+      RouteKey: "PUT /api/admin/problems/enabled"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${problemsIntegration}
+  routeAdminProblemsCsv:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "POST /api/admin/problems/csv"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${problemsIntegration}
+
+  # --- Routes: submissions ---
+  routeSubmissionsCreate:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "POST /api/submissions"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${submissionsIntegration}
+  routeAdminSummary:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "GET /api/admin/summary"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${submissionsIntegration}
+  routeAdminTeamSubmissions:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "GET /api/admin/teams/{teamId}/submissions"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${submissionsIntegration}
+
+Outputs:
+  ApiId:
+    Value: !Ref httpApi
+  ApiEndpoint:
+    Value: !GetAtt httpApi.ApiEndpoint
+  ApiDomainName:
+    Description: Bare domain (no protocol) for use as a CloudFront custom origin
+    Value: !Sub "${httpApi}.execute-api.${AWS::Region}.amazonaws.com"

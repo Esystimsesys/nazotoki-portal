@@ -1,0 +1,27 @@
+{
+  "name": "nazotoki-portal-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "謎解きイベント用Webアプリ バックエンド (AWS Lambda / TypeScript)",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "seed": "node scripts/seed.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1095.0",
+    "@aws-sdk/lib-dynamodb": "^3.1095.0",
+    "jsonwebtoken": "^9.0.3",
+    "papaparse": "^5.5.4"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^26.1.1",
+    "@types/papaparse": "^5.5.2",
+    "esbuild": "^0.28.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

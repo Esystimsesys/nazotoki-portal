@@ -1,0 +1,130 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  nazotoki-portal - DynamoDB tables (Teams / Problems / Submissions / Admins).
+  All tables use PAY_PER_REQUEST billing. Key attribute names are the
+  lower-case pk/sk per docs/01-api-contract.md (this is the single source of
+  truth; do not rename). This stack has no dependencies on other stacks.
+
+Resources:
+  # ---------------------------------------------------------------------
+  # Teams: PK pk = TEAM#<teamId>. GSI LoginCodeIndex resolves a team-login
+  # shared code (loginCode) back to the team item (teamId/teamName/active),
+  # so the index projects ALL attributes rather than KEYS_ONLY.
+  # ---------------------------------------------------------------------
+  teamsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: nazotoki-teams
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: loginCode
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: LoginCodeIndex
+          KeySchema:
+            - AttributeName: loginCode
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+
+  # ---------------------------------------------------------------------
+  # Problems: single-table layout for problem metadata + answer patterns.
+  # PK pk = PROBLEM#<problemId>, SK sk = "META" (metadata row) or
+  # "PATTERN#<patternId>" (answer pattern row). No GSI - the enabled-problem
+  # + pattern read path is a Scan per docs/01-api-contract.md (data volume is
+  # small for a single event).
+  # ---------------------------------------------------------------------
+  problemsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: nazotoki-problems
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+
+  # ---------------------------------------------------------------------
+  # Submissions: append-only answer log. PK pk = TEAM#<teamId>, SK sk =
+  # SUBMISSION#<submittedAt>#<submissionId> (sortable by time within a team).
+  # No GSI - per-team history is a Query on pk, and admin summary/ranking
+  # loops over teams (small event-scale team count) per docs/00-design.md.
+  # ---------------------------------------------------------------------
+  submissionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: nazotoki-submissions
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+
+  # ---------------------------------------------------------------------
+  # Admins: PK pk = ADMIN#<adminId>. GSI UsernameIndex resolves the login
+  # username to the admin item (needs passwordHash to verify), so it also
+  # projects ALL attributes.
+  # ---------------------------------------------------------------------
+  adminsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: nazotoki-admins
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: username
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: UsernameIndex
+          KeySchema:
+            - AttributeName: username
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+
+Outputs:
+  TeamsTableName:
+    Value: !Ref teamsTable
+  TeamsTableArn:
+    Value: !GetAtt teamsTable.Arn
+  ProblemsTableName:
+    Value: !Ref problemsTable
+  ProblemsTableArn:
+    Value: !GetAtt problemsTable.Arn
+  SubmissionsTableName:
+    Value: !Ref submissionsTable
+  SubmissionsTableArn:
+    Value: !GetAtt submissionsTable.Arn
+  AdminsTableName:
+    Value: !Ref adminsTable
+  AdminsTableArn:
+    Value: !GetAtt adminsTable.Arn

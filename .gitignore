@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# Local secrets (JWT_SECRET for deploy.sh). Never commit.
+.env.local
+cloudformation/.env.local

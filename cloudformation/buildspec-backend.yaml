@@ -1,0 +1,52 @@
+# CodeBuild buildspec - backend deploy stage (Stage2: BackendDeploy).
+#
+# Runs cloudformation/deploy.sh (rain) to deploy the three application stacks
+# (dynamodb -> lambda-api -> cloudfront). The CI/CD stack itself
+# (nazotoki-cfn-code) is deliberately NOT in templates.conf, so this build
+# never tries to update the pipeline it is running inside.
+#
+# rain is a Go binary from GitHub releases (not an npm package), so it is
+# installed by downloading the release archive. Node.js is required because
+# rain's !Rain::S3 "Run" script (scripts/build-backend.sh) bundles the Lambda
+# functions with esbuild during packaging.
+#
+# JWT_SECRET comes from SSM Parameter Store so it stays STABLE across pipeline
+# runs. deploy.sh generates a random secret when the variable is unset, which
+# would invalidate every issued JWT on each deploy - see cloudformation/README.md.
+version: 0.2
+
+env:
+  variables:
+    RAIN_VERSION: "1.24.3"
+    AWS_REGION: ap-northeast-1
+  parameter-store:
+    JWT_SECRET: /nazotoki/jwt-secret
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 24
+    commands:
+      - curl -sL "https://github.com/aws-cloudformation/rain/releases/download/v${RAIN_VERSION}/rain-v${RAIN_VERSION}_linux-amd64.zip" -o /tmp/rain.zip
+      - unzip -o /tmp/rain.zip -d /tmp/rain
+      - install "/tmp/rain/rain-v${RAIN_VERSION}_linux-amd64/rain" /usr/local/bin/rain
+      - rain --version
+  pre_build:
+    commands:
+      - cd "$CODEBUILD_SRC_DIR/backend" && npm ci
+      - npm run typecheck
+      - npm test
+  build:
+    commands:
+      - cd "$CODEBUILD_SRC_DIR/cloudformation" && ./deploy.sh
+  post_build:
+    commands:
+      - aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name nazotoki-cfn-lambda-api
+        --query "Stacks[0].Outputs" --output json > "$CODEBUILD_SRC_DIR/backend-outputs.json"
+      - aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name nazotoki-cfn-cloudfront
+        --query "Stacks[0].Outputs" --output json > "$CODEBUILD_SRC_DIR/cloudfront-outputs.json"
+
+artifacts:
+  files:
+    - backend-outputs.json
+    - cloudfront-outputs.json

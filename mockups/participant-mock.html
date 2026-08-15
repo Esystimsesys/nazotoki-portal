@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>謎解きイベント - 参加者モック</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-deep: #0b0716;
+    --bg-panel: #16102a;
+    --bg-panel-2: #1e1638;
+    --purple: #8b5cf6;
+    --purple-glow: #a855f7;
+    --magenta: #ff2e9a;
+    --gold: #f4c542;
+    --gold-soft: #ffe08a;
+    --success: #39ff88;
+    --danger: #ff4b6e;
+    --ink: #f3ecff;
+    --ink-dim: #b6a9d9;
+    --border-glow: rgba(168, 85, 247, 0.45);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+    background: radial-gradient(circle at 20% -10%, #2a1a4d 0%, var(--bg-deep) 55%),
+                radial-gradient(circle at 90% 110%, #3a0f45 0%, var(--bg-deep) 60%),
+                var(--bg-deep);
+    background-attachment: fixed;
+    color: var(--ink);
+    font-family: "Noto Sans JP", -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      radial-gradient(1.5px 1.5px at 15% 20%, rgba(255,255,255,0.5) 50%, transparent 51%),
+      radial-gradient(1.5px 1.5px at 75% 15%, rgba(255,255,255,0.4) 50%, transparent 51%),
+      radial-gradient(1px 1px at 45% 60%, rgba(255,255,255,0.35) 50%, transparent 51%),
+      radial-gradient(1.5px 1.5px at 85% 75%, rgba(255,255,255,0.3) 50%, transparent 51%),
+      radial-gradient(1px 1px at 25% 85%, rgba(255,255,255,0.4) 50%, transparent 51%),
+      radial-gradient(1.5px 1.5px at 60% 35%, rgba(255,255,255,0.3) 50%, transparent 51%);
+    opacity: 0.6;
+    z-index: 0;
+  }
+
+  #app {
+    position: relative;
+    z-index: 1;
+    max-width: 480px;
+    margin: 0 auto;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .screen { display: none; flex: 1; flex-direction: column; }
+  .screen.active { display: flex; }
+
+  /* ---------- Login screen ---------- */
+  #screen-login {
+    justify-content: center;
+    align-items: center;
+    padding: 24px;
+    text-align: center;
+  }
+
+  .brand-title {
+    font-family: "Cinzel Decorative", serif;
+    font-size: 28px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    background: linear-gradient(135deg, var(--gold-soft), var(--gold) 40%, var(--magenta) 90%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: 0 0 30px rgba(244, 197, 66, 0.35);
+    margin: 0 0 6px;
+  }
+
+  .brand-sub {
+    color: var(--ink-dim);
+    font-size: 13px;
+    letter-spacing: 3px;
+    margin-bottom: 40px;
+  }
+
+  .login-card {
+    width: 100%;
+    background: linear-gradient(160deg, var(--bg-panel-2), var(--bg-panel));
+    border: 1px solid var(--border-glow);
+    border-radius: 20px;
+    padding: 32px 24px;
+    box-shadow: 0 0 0 1px rgba(168,85,247,0.08), 0 20px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+
+  .lock-icon {
+    font-size: 36px;
+    margin-bottom: 12px;
+    filter: drop-shadow(0 0 10px rgba(168,85,247,0.6));
+  }
+
+  .field-label {
+    display: block;
+    font-size: 12px;
+    color: var(--ink-dim);
+    letter-spacing: 1.5px;
+    margin-bottom: 10px;
+  }
+
+  .code-input {
+    width: 100%;
+    padding: 16px;
+    font-size: 22px;
+    letter-spacing: 6px;
+    text-align: center;
+    font-weight: 700;
+    background: #0d0819;
+    border: 1.5px solid rgba(168,85,247,0.4);
+    border-radius: 12px;
+    color: var(--gold-soft);
+    outline: none;
+    transition: 0.2s;
+  }
+  .code-input:focus {
+    border-color: var(--purple-glow);
+    box-shadow: 0 0 0 3px rgba(168,85,247,0.25);
+  }
+  .code-input::placeholder { color: #4a3d6b; letter-spacing: 3px; }
+
+  .btn-primary {
+    margin-top: 20px;
+    width: 100%;
+    padding: 16px;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #1a0f2e;
+    background: linear-gradient(135deg, var(--gold-soft), var(--gold));
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    box-shadow: 0 6px 20px rgba(244,197,66,0.35);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .btn-primary:active { transform: scale(0.97); }
+
+  .hint-text {
+    margin-top: 18px;
+    font-size: 12px;
+    color: var(--ink-dim);
+    line-height: 1.7;
+  }
+  .hint-text b { color: var(--gold-soft); }
+
+  /* ---------- Answer screen ---------- */
+  #screen-answer { padding: 16px 16px 32px; }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: rgba(30, 22, 56, 0.7);
+    border: 1px solid rgba(168,85,247,0.25);
+    border-radius: 14px;
+    margin-bottom: 18px;
+    backdrop-filter: blur(6px);
+  }
+  .team-chip {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 14px; font-weight: 700;
+  }
+  .team-chip .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 8px var(--success);
+  }
+  .topbar-logout {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: var(--ink-dim);
+    font-size: 12px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    cursor: pointer;
+  }
+
+  .puzzle-note {
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--ink-dim);
+    margin-bottom: 18px;
+    line-height: 1.7;
+    padding: 0 8px;
+  }
+  .puzzle-note b { color: #d9c6ff; }
+
+  .code-display {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+  .code-box {
+    width: 56px; height: 68px;
+    border-radius: 14px;
+    background: #0d0819;
+    border: 2px solid rgba(168,85,247,0.35);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 30px; font-weight: 900;
+    color: var(--gold-soft);
+    transition: 0.15s;
+  }
+  .code-box.filled {
+    border-color: var(--purple-glow);
+    box-shadow: 0 0 16px rgba(168,85,247,0.55);
+  }
+  .code-box.shake { animation: shakeBox 0.45s; }
+
+  @keyframes shakeBox {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-8px); border-color: var(--danger); }
+    40% { transform: translateX(8px); border-color: var(--danger); }
+    60% { transform: translateX(-6px); border-color: var(--danger); }
+    80% { transform: translateX(6px); border-color: var(--danger); }
+  }
+
+  .keypad {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    max-width: 300px;
+    margin: 0 auto;
+  }
+  .key {
+    aspect-ratio: 1.35 / 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--ink);
+    background: linear-gradient(160deg, #241a44, #17102c);
+    border: 1px solid rgba(168,85,247,0.25);
+    border-radius: 16px;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.08s ease, background 0.15s ease;
+  }
+  .key:active { transform: scale(0.93); background: linear-gradient(160deg, #35245e, #1e1638); }
+  .key.action { color: var(--gold-soft); font-size: 18px; }
+
+  .submit-btn {
+    max-width: 300px;
+    margin: 16px auto 0;
+    padding: 18px;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: #fff;
+    background: linear-gradient(135deg, var(--magenta), var(--purple));
+    border: none;
+    border-radius: 16px;
+    cursor: pointer;
+    box-shadow: 0 6px 20px rgba(255,46,154,0.3);
+    transition: opacity 0.15s ease, transform 0.08s ease;
+    display: block;
+    width: 100%;
+  }
+  .submit-btn:active { transform: scale(0.97); }
+  .submit-btn.disabled { opacity: 0.4; box-shadow: none; }
+
+  /* ---------- Result overlay ---------- */
+  #resultOverlay {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(6,3,14,0.55);
+    backdrop-filter: blur(3px);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+  #resultOverlay.show { opacity: 1; pointer-events: all; }
+  #resultOverlay.flash-correct { animation: flashGreen 0.5s ease; }
+  #resultOverlay.flash-wrong { animation: flashRed 0.4s ease; }
+  @keyframes flashGreen { 0% { background: rgba(57,255,136,0.35);} 100% { background: rgba(6,3,14,0.55);} }
+  @keyframes flashRed { 0% { background: rgba(255,75,110,0.4);} 100% { background: rgba(6,3,14,0.55);} }
+
+  .result-card {
+    text-align: center;
+    padding: 40px 32px;
+    border-radius: 24px;
+    max-width: 320px;
+    transform: scale(0.7);
+    opacity: 0;
+    transition: transform 0.35s cubic-bezier(.34,1.56,.64,1), opacity 0.25s ease;
+  }
+  #resultOverlay.show .result-card { transform: scale(1); opacity: 1; }
+
+  .result-card.correct {
+    background: linear-gradient(160deg, #1c3a2c, #10241c);
+    border: 1.5px solid rgba(57,255,136,0.5);
+    box-shadow: 0 0 60px rgba(57,255,136,0.25);
+  }
+  .result-card.incorrect {
+    background: linear-gradient(160deg, #3a1c26, #241017);
+    border: 1.5px solid rgba(255,75,110,0.5);
+    box-shadow: 0 0 60px rgba(255,75,110,0.2);
+  }
+
+  .result-emoji { font-size: 54px; margin-bottom: 6px; }
+  .result-title {
+    font-family: "Cinzel Decorative", serif;
+    font-size: 26px;
+    font-weight: 900;
+    margin: 6px 0 2px;
+  }
+  .result-title.correct { color: var(--success); text-shadow: 0 0 20px rgba(57,255,136,0.5); }
+  .result-title.incorrect { color: var(--danger); text-shadow: 0 0 20px rgba(255,75,110,0.4); }
+
+  .result-sub { font-size: 12.5px; color: var(--ink-dim); margin-bottom: 24px; line-height: 1.6; }
+
+  /* 同じ番号を再入力したときのバッジ（初回正解と区別するため紙吹雪は出さない） */
+  .answered-badge {
+    display: none;
+    margin: 10px auto 4px;
+    padding: 5px 14px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--gold-soft);
+    background: rgba(244,197,66,0.14);
+    border: 1px solid rgba(244,197,66,0.4);
+  }
+  .answered-badge.show { display: inline-block; }
+
+  .result-close {
+    padding: 10px 28px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.06);
+    color: var(--ink);
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  /* confetti */
+  .confetti-piece {
+    position: absolute;
+    top: -10px;
+    width: 8px; height: 14px;
+    opacity: 0.9;
+    animation: confettiFall linear forwards;
+  }
+  @keyframes confettiFall {
+    to { transform: translateY(110vh) rotate(540deg); opacity: 0.2; }
+  }
+
+  .dev-note {
+    text-align: center;
+    font-size: 10.5px;
+    color: #4a3d6b;
+    margin-top: 18px;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ============ LOGIN SCREEN ============ -->
+  <div id="screen-login" class="screen active">
+    <div class="lock-icon">🔮</div>
+    <div class="brand-title">謎解きナイト</div>
+    <div class="brand-sub">MYSTERY CODE HUNT</div>
+
+    <div class="login-card">
+      <span class="field-label">チーム共有コードを入力</span>
+      <input id="teamCodeInput" class="code-input" maxlength="6" placeholder="ABCXYZ" autocomplete="off" onkeydown="if(event.key==='Enter') doLogin()">
+      <button class="btn-primary" onclick="doLogin()">入場する</button>
+      <div class="hint-text">受付で渡された<b>チームコード</b>を、チームの誰か1台の端末に入力してください。</div>
+    </div>
+  </div>
+
+  <!-- ============ ANSWER SCREEN ============ -->
+  <div id="screen-answer" class="screen">
+    <div class="topbar">
+      <div class="team-chip"><span class="dot"></span><span id="teamNameLabel">チーム: ネオン忍者</span></div>
+      <button class="topbar-logout" onclick="doLogout()">退出</button>
+    </div>
+
+    <div class="puzzle-note">会場のすべての問題は同時に出題されています。<br>どの問題から解いてもOK — <b>正解した問題の4桁コード</b>を入力してください。</div>
+
+    <div class="code-display" id="codeDisplay">
+      <div class="code-box"></div>
+      <div class="code-box"></div>
+      <div class="code-box"></div>
+      <div class="code-box"></div>
+    </div>
+
+    <div class="keypad">
+      <div class="key" onclick="pressKey('1')">1</div>
+      <div class="key" onclick="pressKey('2')">2</div>
+      <div class="key" onclick="pressKey('3')">3</div>
+      <div class="key" onclick="pressKey('4')">4</div>
+      <div class="key" onclick="pressKey('5')">5</div>
+      <div class="key" onclick="pressKey('6')">6</div>
+      <div class="key" onclick="pressKey('7')">7</div>
+      <div class="key" onclick="pressKey('8')">8</div>
+      <div class="key" onclick="pressKey('9')">9</div>
+      <div class="key action" onclick="backspace()">⌫</div>
+      <div class="key" onclick="pressKey('0')">0</div>
+      <div class="key action" onclick="clearCode()">C</div>
+    </div>
+    <button class="submit-btn" onclick="submitCode()">回答する</button>
+
+    <div class="dev-note">※これはUIモックです。1234 と 0057 は正解、それ以外は不正解として動作します。</div>
+  </div>
+
+</div>
+
+<!-- ============ RESULT OVERLAY ============ -->
+<div id="resultOverlay" onclick="closeResult()">
+  <div class="result-card" id="resultCard" onclick="event.stopPropagation()">
+    <div class="result-emoji" id="resultEmoji">🎉</div>
+    <div class="result-title" id="resultTitle">正解！</div>
+    <div class="answered-badge" id="answeredBadge">この番号は回答済みです</div>
+    <div class="result-sub" id="resultSub">お見事、謎を解き明かした！</div>
+    <button class="result-close" onclick="closeResult()">つづける</button>
+  </div>
+</div>
+
+<script>
+  let currentCode = '';
+  let isShowingResult = false;
+
+  // デモ用の判定テーブル（実際はサーバー側でアクティブな全問題の登録パターンと照合する）
+  // 参加者には正解/不正解のみ表示し、賞金や集計は管理者側でのみ確認できる
+  const demoCorrectCodes = ['1234', '0057'];
+  // 送信済みの番号（実際はサーバー側でチームの回答履歴から判定する）
+  const answeredCodes = new Set();
+
+  function updateCodeDisplay() {
+    const boxes = document.querySelectorAll('.code-box');
+    boxes.forEach((box, i) => {
+      box.textContent = currentCode[i] || '';
+      box.classList.toggle('filled', !!currentCode[i]);
+    });
+    const submit = document.querySelector('.submit-btn');
+    if (submit) submit.classList.toggle('disabled', currentCode.length < 4);
+  }
+
+  function pressKey(digit) {
+    if (currentCode.length < 4) {
+      currentCode += digit;
+      updateCodeDisplay();
+    }
+  }
+  function backspace() {
+    currentCode = currentCode.slice(0, -1);
+    updateCodeDisplay();
+  }
+  function clearCode() {
+    currentCode = '';
+    updateCodeDisplay();
+  }
+
+  function shakeBoxes() {
+    document.querySelectorAll('.code-box').forEach(b => {
+      b.classList.remove('shake');
+      void b.offsetWidth;
+      b.classList.add('shake');
+    });
+  }
+
+  function spawnConfetti() {
+    const colors = ['#f4c542', '#ff2e9a', '#a855f7', '#39ff88', '#ffe08a'];
+    const overlay = document.getElementById('resultOverlay');
+    for (let i = 0; i < 60; i++) {
+      const piece = document.createElement('div');
+      piece.className = 'confetti-piece';
+      piece.style.left = Math.random() * 100 + 'vw';
+      piece.style.background = colors[Math.floor(Math.random() * colors.length)];
+      piece.style.animationDuration = (1.6 + Math.random() * 1.4) + 's';
+      piece.style.transform = `rotate(${Math.random() * 360}deg)`;
+      overlay.appendChild(piece);
+      setTimeout(() => piece.remove(), 3200);
+    }
+  }
+
+  function submitCode() {
+    if (isShowingResult) return;
+    if (currentCode.length < 4) {
+      shakeBoxes();
+      return;
+    }
+    const isCorrect = demoCorrectCodes.includes(currentCode);
+    // 実際はサーバーが自チームの回答履歴から判定して alreadyAnswered を返す
+    const alreadyAnswered = answeredCodes.has(currentCode);
+    answeredCodes.add(currentCode);
+    showResult(isCorrect, alreadyAnswered);
+    currentCode = '';
+    updateCodeDisplay();
+  }
+
+  function showResult(isCorrect, alreadyAnswered) {
+    const overlay = document.getElementById('resultOverlay');
+    const card = document.getElementById('resultCard');
+    const emoji = document.getElementById('resultEmoji');
+    const title = document.getElementById('resultTitle');
+    const sub = document.getElementById('resultSub');
+    const badge = document.getElementById('answeredBadge');
+
+    card.className = 'result-card ' + (isCorrect ? 'correct' : 'incorrect');
+    title.className = 'result-title ' + (isCorrect ? 'correct' : 'incorrect');
+    emoji.textContent = alreadyAnswered ? '🔁' : (isCorrect ? '🎉' : '💥');
+    title.textContent = isCorrect ? '正解！' : '不正解…';
+    badge.classList.toggle('show', alreadyAnswered);
+    sub.textContent = alreadyAnswered
+      ? 'すでに送信した番号です。別の謎に挑戦しよう'
+      : (isCorrect ? 'お見事、謎を解き明かした！' : '惜しい、もう一度考えてみよう');
+
+    overlay.classList.remove('flash-correct', 'flash-wrong');
+    void overlay.offsetWidth;
+    overlay.classList.add('show', isCorrect ? 'flash-correct' : 'flash-wrong');
+    isShowingResult = true;
+
+    // 再入力は新たな達成ではないため紙吹雪は出さない（初回正解と視覚的に区別する）
+    if (isCorrect && !alreadyAnswered) {
+      spawnConfetti();
+    } else if (!isCorrect) {
+      shakeBoxes();
+    }
+
+    clearTimeout(window.__resultTimer);
+    window.__resultTimer = setTimeout(closeResult, 2200);
+  }
+
+  function closeResult() {
+    document.getElementById('resultOverlay').classList.remove('show');
+    document.querySelectorAll('.confetti-piece').forEach(p => p.remove());
+    isShowingResult = false;
+  }
+
+  function doLogin() {
+    const code = document.getElementById('teamCodeInput').value.trim();
+    if (!code) return;
+    document.getElementById('screen-login').classList.remove('active');
+    document.getElementById('screen-answer').classList.add('active');
+  }
+
+  function doLogout() {
+    document.getElementById('screen-answer').classList.remove('active');
+    document.getElementById('screen-login').classList.add('active');
+  }
+
+  updateCodeDisplay();
+</script>
+</body>
+</html>

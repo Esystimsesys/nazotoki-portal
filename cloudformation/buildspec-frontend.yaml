@@ -1,0 +1,32 @@
+# CodeBuild buildspec - frontend build & deploy stage (Stage3: FrontendBuildDeploy).
+#
+# VITE_API_BASE is left at its default (/api): the SPA and the API are served
+# from the same CloudFront distribution, so the frontend calls relative paths
+# (docs/01-api-contract.md). No backend URL needs to be injected at build time.
+#
+# The frontend S3 bucket and the CloudFront distribution id come from the
+# BackendDeploy stage's secondary input artifact
+# (BackendOutputs -> $CODEBUILD_SRC_DIR_BackendOutputs).
+version: 0.2
+
+env:
+  variables:
+    AWS_REGION: ap-northeast-1
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 24
+  pre_build:
+    commands:
+      - export OUTPUTS_DIR="${CODEBUILD_SRC_DIR_BackendOutputs}"
+      - export FRONTEND_BUCKET=$(jq -r '.[] | select(.OutputKey=="FrontendBucketName") | .OutputValue' "$OUTPUTS_DIR/cloudfront-outputs.json")
+      - export DISTRIBUTION_ID=$(jq -r '.[] | select(.OutputKey=="DistributionId") | .OutputValue' "$OUTPUTS_DIR/cloudfront-outputs.json")
+      - test -n "$FRONTEND_BUCKET" && test -n "$DISTRIBUTION_ID"
+      - cd "$CODEBUILD_SRC_DIR/frontend" && npm ci
+  build:
+    commands:
+      - cd "$CODEBUILD_SRC_DIR/frontend"
+      - npm run build
+      - aws s3 sync dist/ "s3://${FRONTEND_BUCKET}" --delete
+      - aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*"

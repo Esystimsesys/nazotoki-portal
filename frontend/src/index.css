@@ -1,0 +1,116 @@
+/* グローバルスタイル（謎解きナイト・ダーク×ネオンテーマ） */
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+}
+
+.full-viewport {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* 数値の等幅表示（4桁コード・賞金額など） */
+.mono {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+/* 見出し用の装飾フォント（モックの brand-title / result-title 相当） */
+.brand-font {
+  font-family: "Cinzel Decorative", serif;
+}
+
+/* タッチ端末ではタップ領域を44px以上確保する */
+@media (pointer: coarse) {
+  button,
+  a.MuiButtonBase-root {
+    min-height: 44px;
+  }
+}
+
+/* 星空の背景演出（mockups/*.html の body::before を再現） */
+.starfield::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(1.5px 1.5px at 15% 20%, rgba(255, 255, 255, 0.5) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 75% 15%, rgba(255, 255, 255, 0.4) 50%, transparent 51%),
+    radial-gradient(1px 1px at 45% 60%, rgba(255, 255, 255, 0.35) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 85% 75%, rgba(255, 255, 255, 0.3) 50%, transparent 51%),
+    radial-gradient(1px 1px at 25% 85%, rgba(255, 255, 255, 0.4) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 60% 35%, rgba(255, 255, 255, 0.3) 50%, transparent 51%);
+  opacity: 0.6;
+  z-index: 0;
+}
+
+/* 不正解時のシェイク演出（コード入力4桁ボックス） */
+@keyframes nazotoki-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-8px);
+    border-color: var(--nazotoki-danger, #ff4b6e) !important;
+  }
+  40% {
+    transform: translateX(8px);
+    border-color: var(--nazotoki-danger, #ff4b6e) !important;
+  }
+  60% {
+    transform: translateX(-6px);
+    border-color: var(--nazotoki-danger, #ff4b6e) !important;
+  }
+  80% {
+    transform: translateX(6px);
+    border-color: var(--nazotoki-danger, #ff4b6e) !important;
+  }
+}
+.nazotoki-shake {
+  animation: nazotoki-shake 0.45s;
+}
+
+/* 正解時のフラッシュ演出（結果オーバーレイの背景） */
+@keyframes nazotoki-flash-correct {
+  0% {
+    background: rgba(57, 255, 136, 0.35);
+  }
+  100% {
+    background: rgba(6, 3, 14, 0.6);
+  }
+}
+@keyframes nazotoki-flash-wrong {
+  0% {
+    background: rgba(255, 75, 110, 0.4);
+  }
+  100% {
+    background: rgba(6, 3, 14, 0.6);
+  }
+}
+.nazotoki-flash-correct {
+  animation: nazotoki-flash-correct 0.5s ease;
+}
+.nazotoki-flash-wrong {
+  animation: nazotoki-flash-wrong 0.4s ease;
+}
+
+/* 紙吹雪 */
+@keyframes nazotoki-confetti-fall {
+  to {
+    transform: translateY(110vh) rotate(540deg);
+    opacity: 0.2;
+  }
+}
+.nazotoki-confetti-piece {
+  position: absolute;
+  top: -10px;
+  width: 8px;
+  height: 14px;
+  opacity: 0.9;
+  animation: nazotoki-confetti-fall linear forwards;
+}
