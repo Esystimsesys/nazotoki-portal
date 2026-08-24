@@ -1,0 +1,145 @@
+# nazotoki-portal - build, test and deploy on push to main.
+#
+# Replaces the previous CodePipeline (Source -> BackendDeploy ->
+# FrontendBuildDeploy). The two jobs below map 1:1 onto the two buildspecs
+# that stage used, so the ordering guarantee is unchanged: the frontend is
+# only built and uploaded after the backend stacks deployed successfully.
+#
+# Auth is OIDC only - no AWS access keys are stored in GitHub. The role is
+# defined in cloudformation/templates/apne1/nazotoki-cfn-code.yaml and its
+# trust policy pins the OIDC subject to this repository's main branch.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  # Lets a deploy be re-run from the Actions tab without an empty commit
+  # (e.g. after fixing something outside the repo, like an SSM value).
+  workflow_dispatch:
+
+# The OIDC subject in the role's trust policy is pinned to refs/heads/main,
+# so a run must be on main to get credentials at all.
+permissions:
+  contents: read
+  id-token: write
+
+# Two pushes in quick succession would otherwise race on the same
+# CloudFormation stacks; queue them instead of running concurrently.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-1
+  ROLE_ARN: arn:aws:iam::507965827518:role/nazotoki-github-actions-deploy-role
+  RAIN_VERSION: "1.24.3"
+
+jobs:
+  backend:
+    name: typecheck, test, deploy stacks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # rain is a Go binary published on GitHub releases, not an npm package.
+      # It is what packages the Lambda bundles (the !Rain::S3 directive runs
+      # cloudformation/scripts/build-backend.sh during deploy).
+      - name: Install rain
+        run: |
+          curl -sL "https://github.com/aws-cloudformation/rain/releases/download/v${RAIN_VERSION}/rain-v${RAIN_VERSION}_linux-amd64.zip" -o /tmp/rain.zip
+          unzip -o /tmp/rain.zip -d /tmp/rain
+          sudo install "/tmp/rain/rain-v${RAIN_VERSION}_linux-amd64/rain" /usr/local/bin/rain
+          rain --version
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: backend
+        run: npm run typecheck
+
+      # A failure here stops the workflow before anything is deployed, which
+      # is the gate the old BackendDeploy stage provided.
+      - name: Test
+        working-directory: backend
+        run: npm test
+
+      # Read from SSM rather than a GitHub secret so the value stays stable
+      # and lives in one place. deploy.sh generates a random secret when
+      # JWT_SECRET is unset, which would invalidate every issued JWT on each
+      # deploy - see cloudformation/README.md.
+      - name: Load JWT_SECRET from SSM
+        run: |
+          SECRET="$(aws ssm get-parameter --name /nazotoki/jwt-secret \
+            --with-decryption --region "$AWS_REGION" \
+            --query 'Parameter.Value' --output text)"
+          test -n "$SECRET"
+          echo "::add-mask::$SECRET"
+          echo "JWT_SECRET=$SECRET" >> "$GITHUB_ENV"
+
+      - name: Deploy stacks
+        working-directory: cloudformation
+        run: ./deploy.sh
+
+  frontend:
+    name: build and publish frontend
+    needs: backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # The bucket and distribution are outputs of the stack the previous job
+      # just deployed, so they are read back rather than hardcoded.
+      - name: Resolve frontend targets
+        run: |
+          get_output() {
+            aws cloudformation describe-stacks \
+              --stack-name nazotoki-cfn-cloudfront --region "$AWS_REGION" \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
+          }
+          BUCKET="$(get_output FrontendBucketName)"
+          DIST="$(get_output DistributionId)"
+          test -n "$BUCKET" && test -n "$DIST"
+          echo "FRONTEND_BUCKET=$BUCKET" >> "$GITHUB_ENV"
+          echo "DISTRIBUTION_ID=$DIST" >> "$GITHUB_ENV"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      # VITE_API_BASE stays at its default (/api): the SPA and the API are
+      # served from the same CloudFront distribution, so no backend URL needs
+      # injecting at build time (docs/01-api-contract.md).
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Publish to S3 and invalidate CloudFront
+        working-directory: frontend
+        run: |
+          aws s3 sync dist/ "s3://${FRONTEND_BUCKET}" --delete
+          aws cloudfront create-invalidation \
+            --distribution-id "$DISTRIBUTION_ID" --paths "/*"

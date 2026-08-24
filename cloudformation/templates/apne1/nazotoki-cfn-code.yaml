@@ -1,315 +1,91 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  nazotoki-portal - CI/CD: CodeCommit repository, two CodeBuild projects
-  (backend = typecheck/test then rain deploy of the app stacks, frontend =
-  Vite build + S3 sync + CloudFront invalidation) and a 3-stage CodePipeline
-  (Source -> BackendDeploy -> FrontendBuildDeploy).
+  nazotoki-portal - IAM role that GitHub Actions assumes via OIDC to deploy
+  this project (.github/workflows/deploy.yml). Replaces the former CodeCommit
+  + CodeBuild x2 + CodePipeline setup. Not listed in templates.conf.
 
-  This stack is deliberately NOT listed in templates.conf: the pipeline's
-  backend stage runs deploy.sh, and if this stack were part of that list the
-  pipeline would try to update itself mid-execution (superseding the running
-  execution). Deploy/update this stack from a workstation instead:
-    rain deploy -r ap-northeast-1 templates/apne1/nazotoki-cfn-code.yaml nazotoki-cfn-code
+# Why GitHub Actions instead of CodePipeline:
+#   The repository moved to GitHub, and a CodePipeline source needs a
+#   CodeConnections connection whose OAuth handshake can only be completed in
+#   the console - there is no API for it (the CLI can create the connection,
+#   but it stays PENDING). GitHub Actions + OIDC has no such manual step,
+#   keeps the pipeline definition in the repo, and drops the CodeBuild and
+#   artifact-bucket cost entirely. The workflow does what the pipeline did:
+#   typecheck/test -> rain deploy of the app stacks -> Vite build + S3 sync +
+#   CloudFront invalidation.
+#
+# Why this stack is NOT in templates.conf:
+#   The workflow runs deploy.sh; if this stack were in that list, every deploy
+#   would rewrite the very role the running job is authenticated with. Deploy
+#   it from a workstation instead:
+#     rain deploy -r ap-northeast-1 templates/apne1/nazotoki-cfn-code.yaml nazotoki-cfn-code
+#
+# Prerequisites:
+#   - The shared JWT secret exists in SSM Parameter Store as a SecureString at
+#     /nazotoki/jwt-secret, so it stays stable across deploys (deploy.sh
+#     generates a random one when unset - see cloudformation/README.md).
+#   - The account already has the GitHub OIDC provider
+#     (token.actions.githubusercontent.com). It is referenced, not created:
+#     an account can hold only one provider per URL and this one predates
+#     this stack.
 
-  Prerequisite: the shared JWT secret must exist in SSM Parameter Store as a
-  SecureString at /nazotoki/jwt-secret before the first pipeline run, so the
-  secret stays stable across deploys (see cloudformation/README.md).
+Parameters:
+  GitHubOwner:
+    Type: String
+    Default: Esystimsesys
+    Description: GitHub organization/user that owns the repository.
+  GitHubRepo:
+    Type: String
+    Default: nazotoki-portal
+    Description: GitHub repository name.
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: >
+      Branch allowed to assume the deploy role. The trust policy pins the OIDC
+      subject to this branch, so a workflow running on any other ref (or from
+      a fork's pull request) cannot obtain deploy credentials.
 
 Resources:
   # ---------------------------------------------------------------------
-  # Source repository
+  # Deploy role assumed by GitHub Actions through OIDC.
+  #
+  # No long-lived access keys are stored in GitHub: the workflow requests a
+  # short-lived OIDC token from GitHub and exchanges it for temporary AWS
+  # credentials, scoped by the subject condition below.
   # ---------------------------------------------------------------------
-  repository:
-    Type: AWS::CodeCommit::Repository
-    Properties:
-      RepositoryName: nazotoki-portal
-      RepositoryDescription: Nazotoki (puzzle) event portal - frontend + backend + cloudformation
-
-  # ---------------------------------------------------------------------
-  # Pipeline artifact store
-  # ---------------------------------------------------------------------
-  artifactBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub nazotoki-pipeline-artifacts-${AWS::AccountId}
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      LifecycleConfiguration:
-        Rules:
-          - Id: expire-old-artifacts
-            Status: Enabled
-            ExpirationInDays: 30
-
-  # ---------------------------------------------------------------------
-  # CodeBuild - backend (runs cloudformation/deploy.sh via rain).
-  # The role is intentionally broad (AdministratorAccess): this project
-  # creates/updates every stack in the system, including IAM roles, Lambda,
-  # API Gateway and CloudFront. Scoping it tighter would mean maintaining a
-  # permission list mirroring the entire template set; accepted for a
-  # single-account internal event system (see cloudformation/README.md).
-  # ---------------------------------------------------------------------
-  backendBuildRole:
+  githubActionsDeployRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: nazotoki-codebuild-backend-role
+      RoleName: nazotoki-github-actions-deploy-role
+      Description: Assumed by GitHub Actions (OIDC) to deploy nazotoki-portal.
+      MaxSessionDuration: 3600
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
-              Service: codebuild.amazonaws.com
-            Action: sts:AssumeRole
+              Federated: !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                # Guards against the "confused deputy" case where some other
+                # GitHub workflow presents a token to this role.
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOwner}/${GitHubRepo}:ref:refs/heads/${GitHubBranch}
       ManagedPolicyArns:
+        # AdministratorAccess, same as the CodeBuild backend role it replaces.
+        # The deploy creates/updates IAM roles, Lambda, API Gateway, DynamoDB
+        # and CloudFront across every stack, so a scoped policy would end up
+        # restating the whole template set and drifting from it on each change.
+        # Accepted for a single-account internal event system - see
+        # cloudformation/README.md "IAM権限の方針".
         - arn:aws:iam::aws:policy/AdministratorAccess
 
-  backendBuildProject:
-    Type: AWS::CodeBuild::Project
-    Properties:
-      Name: nazotoki-build-backend
-      Description: Backend typecheck/test, then rain deploy of dynamodb/lambda-api/cloudfront stacks
-      ServiceRole: !GetAtt backendBuildRole.Arn
-      TimeoutInMinutes: 60
-      Artifacts:
-        Type: CODEPIPELINE
-      Environment:
-        Type: LINUX_CONTAINER
-        ComputeType: BUILD_GENERAL1_SMALL
-        Image: aws/codebuild/amazonlinux-x86_64-standard:5.0
-      Source:
-        Type: CODEPIPELINE
-        BuildSpec: cloudformation/buildspec-backend.yaml
-
-  # ---------------------------------------------------------------------
-  # CodeBuild - frontend (Vite build, S3 sync, CloudFront invalidation)
-  # ---------------------------------------------------------------------
-  frontendBuildRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: nazotoki-codebuild-frontend-role
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: codebuild.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: frontend-build
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/nazotoki-build-frontend*
-              - Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:GetObjectVersion
-                  - s3:PutObject
-                Resource: !Sub ${artifactBucket.Arn}/*
-              - Effect: Allow
-                Action:
-                  - s3:ListBucket
-                Resource:
-                  - !GetAtt artifactBucket.Arn
-                  - !Sub arn:aws:s3:::nazotoki-frontend-${AWS::AccountId}
-              - Effect: Allow
-                Action:
-                  - s3:PutObject
-                  - s3:GetObject
-                  - s3:DeleteObject
-                Resource: !Sub arn:aws:s3:::nazotoki-frontend-${AWS::AccountId}/*
-              - Effect: Allow
-                Action:
-                  - cloudfront:CreateInvalidation
-                Resource: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/*
-              - Effect: Allow
-                Action:
-                  - cloudformation:DescribeStacks
-                Resource: !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/nazotoki-cfn-*/*
-
-  frontendBuildProject:
-    Type: AWS::CodeBuild::Project
-    Properties:
-      Name: nazotoki-build-frontend
-      Description: Vite build, S3 sync, CloudFront invalidation
-      ServiceRole: !GetAtt frontendBuildRole.Arn
-      TimeoutInMinutes: 30
-      Artifacts:
-        Type: CODEPIPELINE
-      Environment:
-        Type: LINUX_CONTAINER
-        ComputeType: BUILD_GENERAL1_SMALL
-        Image: aws/codebuild/amazonlinux-x86_64-standard:5.0
-      Source:
-        Type: CODEPIPELINE
-        BuildSpec: cloudformation/buildspec-frontend.yaml
-
-  # ---------------------------------------------------------------------
-  # CodePipeline (3 stages)
-  # ---------------------------------------------------------------------
-  pipelineRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: nazotoki-codepipeline-role
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: codepipeline.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: pipeline
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - codecommit:GetBranch
-                  - codecommit:GetCommit
-                  - codecommit:GetRepository
-                  - codecommit:UploadArchive
-                  - codecommit:GetUploadArchiveStatus
-                  - codecommit:CancelUploadArchive
-                Resource: !GetAtt repository.Arn
-              - Effect: Allow
-                Action:
-                  - codebuild:StartBuild
-                  - codebuild:BatchGetBuilds
-                Resource:
-                  - !GetAtt backendBuildProject.Arn
-                  - !GetAtt frontendBuildProject.Arn
-              - Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:GetObjectVersion
-                  - s3:PutObject
-                  - s3:GetBucketVersioning
-                Resource:
-                  - !GetAtt artifactBucket.Arn
-                  - !Sub ${artifactBucket.Arn}/*
-
-  pipeline:
-    Type: AWS::CodePipeline::Pipeline
-    Properties:
-      Name: nazotoki-pipeline
-      RoleArn: !GetAtt pipelineRole.Arn
-      ArtifactStore:
-        Type: S3
-        Location: !Ref artifactBucket
-      Stages:
-        - Name: Source
-          Actions:
-            - Name: Source
-              ActionTypeId:
-                Category: Source
-                Owner: AWS
-                Provider: CodeCommit
-                Version: "1"
-              Configuration:
-                RepositoryName: !GetAtt repository.Name
-                BranchName: main
-                PollForSourceChanges: false
-              OutputArtifacts:
-                - Name: SourceOutput
-              RunOrder: 1
-        - Name: BackendDeploy
-          Actions:
-            - Name: DeployBackendStacks
-              ActionTypeId:
-                Category: Build
-                Owner: AWS
-                Provider: CodeBuild
-                Version: "1"
-              Configuration:
-                ProjectName: !Ref backendBuildProject
-              InputArtifacts:
-                - Name: SourceOutput
-              OutputArtifacts:
-                - Name: BackendOutputs
-              RunOrder: 1
-        - Name: FrontendBuildDeploy
-          Actions:
-            - Name: BuildAndDeployFrontend
-              ActionTypeId:
-                Category: Build
-                Owner: AWS
-                Provider: CodeBuild
-                Version: "1"
-              Configuration:
-                ProjectName: !Ref frontendBuildProject
-                PrimarySource: SourceOutput
-              InputArtifacts:
-                - Name: SourceOutput
-                - Name: BackendOutputs
-              RunOrder: 1
-
-  # ---------------------------------------------------------------------
-  # EventBridge rule: trigger the pipeline on push to main
-  # (PollForSourceChanges is false, so this rule is the trigger)
-  # ---------------------------------------------------------------------
-  pipelineTriggerRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: nazotoki-pipeline-trigger-role
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: events.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: start-pipeline
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action: codepipeline:StartPipelineExecution
-                Resource: !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${pipeline}
-
-  pipelineTriggerRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: nazotoki-pipeline-trigger
-      Description: Start the pipeline on push to the main branch
-      EventPattern:
-        source:
-          - aws.codecommit
-        detail-type:
-          - CodeCommit Repository State Change
-        resources:
-          - !GetAtt repository.Arn
-        detail:
-          event:
-            - referenceCreated
-            - referenceUpdated
-          referenceType:
-            - branch
-          referenceName:
-            - main
-      Targets:
-        - Id: pipeline
-          Arn: !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${pipeline}
-          RoleArn: !GetAtt pipelineTriggerRole.Arn
-
 Outputs:
-  RepositoryCloneUrlHttp:
-    Value: !GetAtt repository.CloneUrlHttp
-  RepositoryArn:
-    Value: !GetAtt repository.Arn
-  PipelineName:
-    Value: !Ref pipeline
-  ArtifactBucketName:
-    Value: !Ref artifactBucket
+  DeployRoleArn:
+    Description: Set as the role-to-assume in .github/workflows/deploy.yml
+    Value: !GetAtt githubActionsDeployRole.Arn
+  GitHubRepository:
+    Value: !Sub ${GitHubOwner}/${GitHubRepo}

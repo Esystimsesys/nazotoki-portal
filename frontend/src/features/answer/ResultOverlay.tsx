@@ -32,7 +32,7 @@ interface ResultOverlayProps {
   onClose: () => void;
 }
 
-/** 正解/不正解の演出オーバーレイ（mockups/participant-mock.html #resultOverlay 相当） */
+/** 正解/不正解の演出オーバーレイ */
 export function ResultOverlay({ open, isCorrect, alreadyAnswered, onClose }: ResultOverlayProps) {
   const [confetti, setConfetti] = useState<ConfettiPiece[]>([]);
 

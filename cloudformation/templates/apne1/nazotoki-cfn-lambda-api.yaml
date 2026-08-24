@@ -487,6 +487,25 @@ Resources:
       RouteKey: "POST /api/admin/problems/csv"
       AuthorizationType: NONE
       Target: !Sub integrations/${problemsIntegration}
+  # Event start/stop gate. Served by the problems function because the state
+  # lives as a single item in the Problems table (pk=EVENT / sk=STATE), which
+  # only that function has write access to. GET is reachable by participants
+  # too (the answer screen shows "not started yet"), so the Lambda verifies
+  # the token without requiring the admin role on that route.
+  routeEventGet:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "GET /api/event"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${problemsIntegration}
+  routeAdminEventSet:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "PUT /api/admin/event"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${problemsIntegration}
 
   # --- Routes: submissions ---
   routeSubmissionsCreate:

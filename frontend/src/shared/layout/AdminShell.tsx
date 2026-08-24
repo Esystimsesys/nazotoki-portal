@@ -6,14 +6,16 @@ import Typography from "@mui/material/Typography";
 import { Outlet, useLocation, useNavigate } from "react-router";
 import { useAdminAuth } from "../../features/admin-auth/AdminAuthContext";
 import { neon } from "../../app/theme";
+import { EventControl } from "./EventControl";
 
 const TABS = [
   { path: "/admin/problems", label: "📖 問題管理" },
   { path: "/admin/teams", label: "🚩 チーム管理" },
   { path: "/admin/dashboard", label: "🏆 ダッシュボード" },
+  { path: "/admin/screen", label: "🖥 大画面表示" },
 ];
 
-/** 管理コンソール共通レイアウト（mockups/admin-mock.html のヘッダー＋タブ相当） */
+/** 管理コンソール共通レイアウト（ヘッダー＋タブ） */
 export function AdminShell() {
   const { admin, logout } = useAdminAuth();
   const location = useLocation();
@@ -55,6 +57,7 @@ export function AdminShell() {
           </Typography>
         </Typography>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+          <EventControl />
           <Typography variant="body2" sx={{ color: "text.secondary", display: { xs: "none", sm: "block" } }}>
             {admin?.username}
           </Typography>

@@ -1,7 +1,7 @@
 # 謎解きナイト フロントエンド
 
 謎解きイベント用Webアプリの参加者/管理者フロントエンド。React 19 + Vite + TypeScript + MUI + TanStack Query + React Router 構成。
-API契約は [`../docs/01-api-contract.md`](../docs/01-api-contract.md) が唯一の正。見た目・演出は [`../mockups/participant-mock.html`](../mockups/participant-mock.html) / [`../mockups/admin-mock.html`](../mockups/admin-mock.html) を再現している。
+API契約は [`../docs/01-api-contract.md`](../docs/01-api-contract.md) が唯一の正。
 
 ## セットアップ
 

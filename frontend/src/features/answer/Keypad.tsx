@@ -26,7 +26,7 @@ const KEY_SX = {
   },
 } as const;
 
-/** 3×4のタップ式テンキー（mockups/participant-mock.html .keypad 相当） */
+/** 3×4のタップ式テンキー */
 export function Keypad({ onDigit, onBackspace, onClear, disabled = false }: KeypadProps) {
   return (
     <Box

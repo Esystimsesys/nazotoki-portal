@@ -29,6 +29,8 @@
 - PK: `pk` (S) = `PROBLEM#<problemId>`、SK: `sk` (S)
 - 問題メタ行: `sk` = `META`。属性: `problemId` (S), `label` (S), `enabled` (BOOL), `createdAt` (S)
 - 回答パターン行: `sk` = `PATTERN#<patternId>`。属性: `problemId` (S), `patternId` (S), `code` (S, 4桁ゼロ埋め), `isCorrect` (BOOL), `prize` (N, マイナス可), `note` (S, 任意)
+- **イベント状態行**: `pk` = `EVENT`, `sk` = `STATE`（全体で1件のみ）。属性: `running` (BOOL), `startedAt` (S|NULL), `endedAt` (S|NULL), `updatedAt` (S)。行が無い場合は `running: false`（未開始）とみなす。
+  - 専用テーブルを作らずここに置くのは、状態が常に1件でアクセスパターンも単純なため（テーブル・IAM・環境変数を増やすコストに見合わない）。`sk` が `META` でも `PATTERN#` 始まりでもないので、既存のScan（問題メタ行・パターン行だけを拾う）からは自然に除外される。
 - データ量が小さいため、有効問題＋パターンの取得は `Scan` で可（アクセスパターンが単純）。
 
 ### 3. Submissions テーブル（env: `TABLE_SUBMISSIONS`）
@@ -50,7 +52,7 @@
 | --- | --- | --- |
 | `nazotoki-admin-auth` | `POST /api/admin/login` | `TABLE_ADMINS`, `JWT_SECRET` |
 | `nazotoki-teams` | `POST /api/auth/team-login`、`GET/POST /api/admin/teams`、`DELETE /api/admin/teams/{teamId}`、`POST /api/admin/teams/{teamId}/regenerate-code` | `TABLE_TEAMS`, `JWT_SECRET` |
-| `nazotoki-problems` | `GET/POST /api/admin/problems`、`PUT/DELETE /api/admin/problems/{problemId}`、`PUT /api/admin/problems/{problemId}/enabled`、`PUT /api/admin/problems/enabled`（一括）、`POST /api/admin/problems/csv` | `TABLE_PROBLEMS`, `JWT_SECRET` |
+| `nazotoki-problems` | `GET/POST /api/admin/problems`、`PUT/DELETE /api/admin/problems/{problemId}`、`PUT /api/admin/problems/{problemId}/enabled`、`PUT /api/admin/problems/enabled`（一括）、`POST /api/admin/problems/csv`、`GET /api/event`、`PUT /api/admin/event` | `TABLE_PROBLEMS`, `JWT_SECRET` |
 | `nazotoki-submissions` | `POST /api/submissions`、`GET /api/admin/summary`、`GET /api/admin/teams/{teamId}/submissions` | `TABLE_SUBMISSIONS`, `TABLE_PROBLEMS`, `TABLE_TEAMS`, `JWT_SECRET` |
 
 共通ロジックは `backend/shared/` に集約:
@@ -101,7 +103,7 @@
 **POST /api/admin/problems**
 - req: `{ "label": string, "enabled": boolean, "patterns": { "code": string, "isCorrect": boolean, "prize": number, "note"?: string }[] }`
 - res 201: `{ "problem": Problem }`
-- res 409: `enabled=true` で登録しようとしたコードが、他の有効問題のコードと重複（`{ "error": "...", "conflicts": string[] }`）。
+- res 409: 登録しようとしたコードが**他の問題（有効・無効を問わず）**のコードと重複（`{ "error": "...", "conflicts": string[] }`）。
 
 **PUT /api/admin/problems/{problemId}**
 - req: POSTと同じ形（全置換）。res 200: `{ "problem": Problem }`。重複時 409。
@@ -110,7 +112,7 @@
 
 **PUT /api/admin/problems/{problemId}/enabled**
 - req: `{ "enabled": boolean }`
-- res 200: `{ "problem": Problem }`。`enabled=true` にする際に重複が生じるなら 409。
+- res 200: `{ "problem": Problem }`。コードは登録時点で全問題を横断して一意なため、通常この操作で409にはならない（既存データに重複が残っている場合の防御としてのみ409）。
 
 **PUT /api/admin/problems/enabled**（一括）
 - req: `{ "enabled": boolean }`（全問題を一括で有効/無効）
@@ -122,6 +124,24 @@
 - res 200: `{ "imported": number, "problems": Problem[] }`
 - res 400: バリデーションエラー `{ "error": string, "rowErrors": { "row": number, "message": string }[] }`（重複コード・不正な行を一覧化。エラーがあれば1件も取り込まない）
 
+### イベントの開始/終了（ゲームゲート）
+
+問題ごとの `enabled` とは**独立した軸**。`enabled` は「その問題を出題対象に含めるか」、`running` は「いま回答を受け付ける時間帯か」を表す。
+
+分けている理由: 全問題をあらかじめ有効にしておき開始時刻に一斉受付を始めたい一方で、特定の問題だけイベント途中から追加投入したいことがある。1つのフラグで兼ねると、開始/終了のたびに全問題の `enabled` を設定し直すことになり、「途中から出す予定だった問題」まで巻き込んで有効化されてしまう。
+
+回答受付の判定順は **`running` → 問題ごとの `enabled`**（`running: false` なら有効な問題が何問あっても受け付けない）。
+
+**GET /api/event**（team / admin 共通。roleは問わず有効なトークンであればよい）
+- res 200: `{ "event": { "running": boolean, "startedAt": string|null, "endedAt": string|null } }`
+- 参加者の回答画面が「開始までお待ちください」「イベント終了」を出すために参照する。
+
+**PUT /api/admin/event**（admin）
+- req: `{ "running": boolean }`
+- res 200: `{ "event": EventState }`
+- `startedAt` / `endedAt` は切り替えた側だけを更新し、もう一方は直前の値を残す（終了後も「何時に開始したか」を画面に出せるようにするため）。
+- 既定は **未開始（`running: false`）**。開始は管理者の明示的な操作であるべきで、デプロイ直後に受付が開いている方が事故（開始前のフライング回答）につながるため。
+
 ### 回答（team）
 
 **POST /api/submissions**
@@ -130,6 +150,7 @@
 - res 200: `{ "isCorrect": boolean, "alreadyAnswered": boolean }`（**賞金額は返さない**）
   - `alreadyAnswered`: 同じ4桁を**そのチームが過去に送信済み**なら `true`。一度試した番号を打ち直したことに気づけるようにするためのフラグ。未登録コード（どの問題にも一致しない番号）も対象。他チームの回答状況は一切反映しない。
   - **`alreadyAnswered: true` のときはSubmissionレコードを作成しない**（同じ番号の記録は1チームにつき1件だけ）。賞金は重複加算防止により2回目以降どのみち0であり、同じ番号で履歴が埋まるのを防ぐため。判定結果（`isCorrect`）は通常どおり返す。この結果、`GET /admin/summary` の `submissionCount` は「試した番号の種類数」を表す。
+- res 403: **イベントが開始されていない/終了している場合**（`running: false`）`{ "error": "イベントはまだ開始されていません" }` または `{ "error": "イベントは終了しました" }`（記録もしない）。問題ごとの `enabled` より先に判定する。
 - res 400: 有効な問題が1件も無い場合 `{ "error": "現在受付中の問題はありません" }`（記録もしない）。
 
 ### 集計（admin）
@@ -137,6 +158,7 @@
 **GET /api/admin/summary** → res 200:
 ```json
 {
+  "event": { "running": boolean, "startedAt": string|null, "endedAt": string|null },
   "ranking": [
     { "teamId": string, "teamName": string, "correctCount": number,
       "incorrectCount": number, "totalPrize": number }
@@ -178,7 +200,8 @@
 6. `isCorrect` は一致パターンの `isCorrect`（一致0件はfalse）。
 
 登録時コード重複バリデーション（`POST/PUT /problems`、一括enabled、CSV取込で使用）:
-- 対象を「有効化した後の有効問題集合」とみなし、その中で同一 `code` が複数問題にまたがって存在してはならない。違反時は 409（CSVは400・行エラー）。同一問題内の重複も不可。
+- **有効・無効を問わず全問題を横断**して、同一 `code` が複数問題に存在してはならない。違反時は 409（CSVは400・行エラー）。同一問題内の重複も不可。
+- 無効な問題を対象から外していた時期があったが、その場合「無効なうちは重複コードを登録でき、有効化しようとした瞬間に初めて409で弾かれる」ことになる。イベント中に問題を追加投入する運用では事故になりやすいため、登録時点で必ず弾く方式に統一した。
 
 ---
 

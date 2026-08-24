@@ -18,7 +18,7 @@ interface CsvImportModalProps {
   onClose: () => void;
 }
 
-/** CSV一括取込モーダル（mockups/admin-mock.html #modal-csv 相当） */
+/** CSV一括取込モーダル */
 export function CsvImportModal({ open, submitting, error, onSubmit, onClose }: CsvImportModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState("");

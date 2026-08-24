@@ -28,7 +28,7 @@ interface ProblemCardProps {
   onDelete: () => void;
 }
 
-/** 問題1件のカード（mockups/admin-mock.html .problem-card 相当）。折りたたみで回答パターン一覧を表示する */
+/** 問題1件のカード。折りたたみで回答パターン一覧を表示する */
 export function ProblemCard({ problem, expandSignal, onToggleEnabled, onEdit, onDelete }: ProblemCardProps) {
   const [open, setOpen] = useState(false);
 

@@ -13,7 +13,7 @@ interface FormValues {
   loginCode: string;
 }
 
-/** チーム共有コードでのログイン画面（mockups/participant-mock.html #screen-login 相当） */
+/** チーム共有コードでのログイン画面 */
 export function TeamLoginPage() {
   const { login } = useTeamAuth();
   const navigate = useNavigate();

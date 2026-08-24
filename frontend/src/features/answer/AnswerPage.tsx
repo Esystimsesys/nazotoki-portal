@@ -2,8 +2,9 @@ import { useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Typography from "@mui/material/Typography";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
+import { eventApi } from "../../api/event";
 import { submissionsApi } from "../../api/submissions";
 import { ApiErrorAlert } from "../../shared/components/ApiErrorAlert";
 import { useTeamAuth } from "../team-auth/TeamAuthContext";
@@ -21,6 +22,21 @@ const CODE_LENGTH = 4;
 export function AnswerPage() {
   const { team, logout } = useTeamAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  // イベントの開始/終了状態。開始前・終了後は入力自体をさせない。
+  // 参加者は開始の瞬間を画面の前で待つので、短めの間隔で追いかけて
+  // 「押してもまだ始まっていない」を自力でリロードせずに済ませる。
+  const { data: eventData } = useQuery({
+    queryKey: ["team", "event"],
+    queryFn: () => eventApi.get("team"),
+    refetchInterval: 5_000,
+  });
+  const eventState = eventData?.event;
+  // 状態が取れるまでは受付中として扱う（取得失敗で回答できなくなるより、
+  // 送信して サーバー側のゲートに弾かれる方が挙動として素直）
+  const accepting = eventState?.running ?? true;
+  const finished = eventState != null && !eventState.running && eventState.endedAt != null;
 
   const [code, setCode] = useState("");
   const [shakeKey, setShakeKey] = useState(0);
@@ -39,6 +55,8 @@ export function AnswerPage() {
     },
     onError: () => {
       setShakeKey((k) => k + 1);
+      // 開始前/終了後で弾かれた可能性があるので、状態を取り直して画面表示を実態に合わせる
+      queryClient.invalidateQueries({ queryKey: ["team", "event"] });
     },
   });
 
@@ -50,7 +68,7 @@ export function AnswerPage() {
   const clear = () => setCode("");
 
   const handleSubmit = () => {
-    if (code.length < CODE_LENGTH || submitMutation.isPending) {
+    if (!accepting || code.length < CODE_LENGTH || submitMutation.isPending) {
       setShakeKey((k) => k + 1);
       return;
     }
@@ -110,24 +128,53 @@ export function AnswerPage() {
         </Button>
       </Box>
 
-      <Typography
-        sx={{ textAlign: "center", fontSize: 12.5, color: "text.secondary", mb: 2.25, lineHeight: 1.7, px: 1, position: "relative", zIndex: 1 }}
-      >
-        会場のすべての問題は同時に出題されています。
-        <br />
-        どの問題から解いてもOK — <Box component="b" sx={{ color: "#d9c6ff" }}>正解した問題の4桁コード</Box>
-        を入力してください。
-      </Typography>
+      {accepting ? (
+        <Typography
+          sx={{ textAlign: "center", fontSize: 12.5, color: "text.secondary", mb: 2.25, lineHeight: 1.7, px: 1, position: "relative", zIndex: 1 }}
+        >
+          会場のすべての問題は同時に出題されています。
+          <br />
+          どの問題から解いてもOK — <Box component="b" sx={{ color: "#d9c6ff" }}>正解した問題の4桁コード</Box>
+          を入力してください。
+        </Typography>
+      ) : (
+        <Box
+          sx={{
+            position: "relative",
+            zIndex: 1,
+            textAlign: "center",
+            px: 2.5,
+            py: 3,
+            mb: 2.25,
+            borderRadius: "16px",
+            background: "rgba(30,22,56,0.7)",
+            border: `1px solid ${finished ? "rgba(182,169,217,0.3)" : "rgba(244,197,66,0.4)"}`,
+          }}
+        >
+          <Typography sx={{ fontSize: 40, mb: 0.5 }}>{finished ? "🏁" : "⏳"}</Typography>
+          <Typography
+            className="brand-font"
+            sx={{ fontSize: 20, fontWeight: 900, color: finished ? "#b6a9d9" : "#ffe08a", mb: 0.75 }}
+          >
+            {finished ? "イベント終了" : "開始までお待ちください"}
+          </Typography>
+          <Typography sx={{ fontSize: 12.5, color: "text.secondary", lineHeight: 1.7 }}>
+            {finished
+              ? "回答の受付は終了しました。おつかれさまでした！"
+              : "まもなく開始します。始まると自動でこの画面が切り替わります。"}
+          </Typography>
+        </Box>
+      )}
 
-      <Box sx={{ position: "relative", zIndex: 1 }}>
+      <Box sx={{ position: "relative", zIndex: 1, opacity: accepting ? 1 : 0.35, pointerEvents: accepting ? "auto" : "none" }}>
         <CodeDisplay code={code} shakeKey={shakeKey} />
 
-        <Keypad onDigit={pushDigit} onBackspace={backspace} onClear={clear} disabled={submitMutation.isPending} />
+        <Keypad onDigit={pushDigit} onBackspace={backspace} onClear={clear} disabled={!accepting || submitMutation.isPending} />
 
         <Button
           fullWidth
           onClick={handleSubmit}
-          disabled={submitMutation.isPending}
+          disabled={!accepting || submitMutation.isPending}
           sx={{
             maxWidth: 300,
             mx: "auto",

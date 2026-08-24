@@ -8,12 +8,14 @@ import { GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
 import { requireAuth } from "../../shared/auth";
 import {
+  isDisabledProblemCode,
   matchSubmission,
   type ExistingSubmission,
   type PatternRecord,
   type ProblemRecord,
 } from "../../shared/answer-matching";
 import { ddb, requiredEnv, scanAll } from "../../shared/dynamo";
+import { getEventState } from "../../shared/event-state";
 import {
   err,
   getJsonBody,
@@ -131,9 +133,30 @@ async function submitCode(event: ApiEvent, teamId: string): Promise<ApiResult> {
     return err(400, "4桁の数字を指定してください");
   }
 
+  // イベント全体のゲート。問題ごとのenabledより先に見る（開始前・終了後は
+  // 有効な問題が何問あろうと受け付けない、という関係のため）。
+  // 未開始と終了後でメッセージを分けるのは、参加者が「まだ始まっていない」のか
+  // 「もう締め切られた」のか画面から判断できるようにするため。
+  const eventState = await getEventState();
+  if (!eventState.running) {
+    return err(
+      403,
+      eventState.endedAt ? "イベントは終了しました" : "イベントはまだ開始されていません",
+    );
+  }
+
   const { enabledProblems, patterns } = await loadEnabledProblemsAndPatterns();
   if (enabledProblems.length === 0) {
     return err(400, "現在受付中の問題はありません");
+  }
+
+  // 無効な問題にだけ存在するコードは、記録せずに不正解として返す。
+  // 記録してしまうと、あとでその問題を有効化したときに「同じコードの2回目以降は
+  // 記録しない」という二重取り防止に引っかかり、先に入力していたチームだけが
+  // 永久に得点できなくなるため（詳細は isDisabledProblemCode のコメント）。
+  // 未登録コード（どの問題にも存在しないもの）はこれまでどおり不正解として記録する。
+  if (isDisabledProblemCode(code, enabledProblems, patterns)) {
+    return ok({ isCorrect: false, alreadyAnswered: false });
   }
 
   // 回答の試行回数に制限は設けない（レート制限もしない）。
@@ -197,10 +220,13 @@ function compareProblemsForDisplay(
 
 /** GET /api/admin/summary（admin） */
 async function summary(): Promise<ApiResult> {
-  const [teamsRaw, { problems, patterns }, submissionsRaw] = await Promise.all([
+  // イベント状態も一緒に返す。管理ダッシュボード・大画面表示はどちらもこの1本を
+  // ポーリングしているので、開始/終了の表示のために別のリクエストを増やさずに済む。
+  const [teamsRaw, { problems, patterns }, submissionsRaw, eventState] = await Promise.all([
     scanAll(requiredEnv("TABLE_TEAMS")),
     loadAllProblemsWithPatterns(),
     scanAll(requiredEnv("TABLE_SUBMISSIONS")),
+    getEventState(),
   ]);
   const teams = teamsRaw as unknown as TeamItem[];
   const submissions = submissionsRaw as unknown as SubmissionItem[];
@@ -258,6 +284,7 @@ async function summary(): Promise<ApiResult> {
     .reduce((sum, v) => sum + v, 0);
 
   return ok({
+    event: eventState,
     ranking,
     problemStats,
     stats: {

@@ -93,6 +93,37 @@ export function matchSubmission(
   };
 }
 
+/**
+ * そのコードが「無効な問題にだけ存在する」かを判定する。
+ *
+ * true の場合、呼び出し側は回答を**記録せずに**不正解として返す。
+ * 無効な問題はまだ出題されていない（あるいは締め切った）ものなので、
+ * そこへの入力は「無かったこと」にするのが正しい。
+ *
+ * 記録してしまうと、あとでその問題を有効化したときに
+ * 「同じコードの2回目以降は記録しない」という賞金の二重取り防止に引っかかり、
+ * そのチームだけ永久に得点できなくなる（画面には正解と出るのに賞金が入らない）。
+ * イベント途中で問題を追加投入する運用が前提なので、ここは塞いでおく必要がある。
+ *
+ * 有効な問題のいずれかに一致する場合は false を返す。コードの重複検証は
+ * 有効な問題どうしでしか行わないため、無効な問題と有効な問題が同じコードを
+ * 持つことがあり得るが、その場合は有効な問題への回答として扱う。
+ */
+export function isDisabledProblemCode(
+  code: string,
+  enabledProblems: ProblemRecord[],
+  patterns: PatternRecord[],
+): boolean {
+  const enabledProblemIds = new Set(
+    enabledProblems.filter((p) => p.enabled).map((p) => p.problemId),
+  );
+  const matchesEnabled = patterns.some(
+    (p) => enabledProblemIds.has(p.problemId) && p.code === code,
+  );
+  if (matchesEnabled) return false;
+  return patterns.some((p) => p.code === code);
+}
+
 /** 問題1件分のコード集合（登録時重複バリデーション用） */
 export interface ProblemCodeSet {
   problemId: string;
@@ -132,28 +163,26 @@ export function findDuplicateCodesAcrossProblems(enabledSets: ProblemCodeSet[]):
 }
 
 /**
- * 登録時コード重複バリデーション（POST/PUT /problems、個別enabled切替、一括enabled、CSV取込で使用）。
+ * 問題の登録・編集時のコード重複バリデーション。重複していたコードの一覧を返す
+ * （空配列なら問題なし）。
  *
- * 対象を「有効化した後の有効問題集合」とみなし、その中で同一codeが複数問題にまたがって存在してはならない。
- * 同一問題内の重複も不可。
+ * **有効・無効を問わず、すべての問題を横断して重複を禁止する。**
+ * 以前は「同時に有効な問題どうし」でしか見ていなかったが、それだと無効な状態でなら
+ * 重複コードを登録できてしまい、あとでその問題を有効化しようとした瞬間に409で弾かれる。
+ * イベント中に問題を追加投入する運用では、その409が「押した瞬間に初めて分かる」形になり
+ * 事故になりやすい。登録時点で必ず弾いておけば、いつ有効化しても必ず通る状態を保てる。
  *
- * @param targetProblemId 登録・編集対象の問題ID（新規登録時は未確定のID、または任意の一意な仮ID）
- * @param targetCodes 登録・編集対象の問題が持つ全パターンのコード
- * @param targetEnabled 登録・編集後の対象問題のenabled値
- * @param otherEnabledProblemSets 対象問題以外で、現在（または変更後に）enabled=trueとなる問題のコード集合
- * @returns 重複しているコードの一覧（重複が無ければ空配列）
+ * 同一問題内での重複（同じ問題に同じコードのパターンが2つある）も併せて検出する。
  */
 export function validateNoDuplicateCodes(
   targetProblemId: string,
   targetCodes: string[],
-  targetEnabled: boolean,
-  otherEnabledProblemSets: ProblemCodeSet[],
+  otherProblemSets: ProblemCodeSet[],
 ): string[] {
   const withinDup = findDuplicateCodesWithinPatterns(targetCodes);
-  if (!targetEnabled) return withinDup;
 
   const allSets: ProblemCodeSet[] = [
-    ...otherEnabledProblemSets.filter((s) => s.problemId !== targetProblemId),
+    ...otherProblemSets.filter((s) => s.problemId !== targetProblemId),
     { problemId: targetProblemId, codes: targetCodes },
   ];
   const acrossDup = findDuplicateCodesAcrossProblems(allSets);

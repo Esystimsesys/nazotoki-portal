@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Table from "@mui/material/Table";
@@ -15,6 +16,7 @@ import { ApiErrorAlert } from "../../shared/components/ApiErrorAlert";
 import { BarChart } from "../../shared/components/charts";
 import { NeonPanel } from "../../shared/components/NeonPanel";
 import { formatPrize, prizeColor } from "../../shared/format";
+import { downloadCsv, problemStatsToCsv, rankingToCsv, timestampedFilename } from "../../shared/csv";
 import { TeamHistoryModal } from "./TeamHistoryModal";
 
 const MEDALS = ["🥇", "🥈", "🥉"];
@@ -28,7 +30,7 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** 大会ダッシュボード（ランキング・問題別サマリ・チーム詳細ドリルダウン）。mockups/admin-mock.html #panel-dashboard 相当 */
+/** 大会ダッシュボード（ランキング・問題別サマリ・チーム詳細ドリルダウン） */
 export function AdminDashboardPage() {
   // イベント進行中は参加者の回答が随時入るため、画面を開いている間は自動更新する。
   // 手動リロードしないと順位が止まって見えるのを防ぐのが目的。
@@ -46,7 +48,39 @@ export function AdminDashboardPage() {
 
   return (
     <Box>
-      <Typography sx={{ fontSize: 16, fontWeight: 800, mb: 0.5 }}>大会ダッシュボード</Typography>
+      <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap" }}>
+        <Typography sx={{ fontSize: 16, fontWeight: 800, mb: 0.5 }}>大会ダッシュボード</Typography>
+        {/* イベント後に結果を残す手段（画面のスクリーンショット以外）。
+            表示中のsummaryをそのまま書き出すので、追加のAPI呼び出しは発生しない。 */}
+        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+          <Button
+            size="small"
+            color="inherit"
+            variant="outlined"
+            disabled={!data || data.ranking.length === 0}
+            onClick={() =>
+              data && downloadCsv(timestampedFilename("nazotoki-ranking"), rankingToCsv(data.ranking))
+            }
+          >
+            ⬇ 順位CSV
+          </Button>
+          <Button
+            size="small"
+            color="inherit"
+            variant="outlined"
+            disabled={!data || data.problemStats.length === 0}
+            onClick={() =>
+              data &&
+              downloadCsv(
+                timestampedFilename("nazotoki-problem-stats"),
+                problemStatsToCsv(data.problemStats),
+              )
+            }
+          >
+            ⬇ 問題別CSV
+          </Button>
+        </Box>
+      </Box>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2.25, flexWrap: "wrap" }}>
         <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
           チームごとの正誤サマリ・合計賞金・ランキングをリアルタイムに確認できます。
@@ -72,11 +106,15 @@ export function AdminDashboardPage() {
           <Box
             sx={{
               display: "grid",
-              gridTemplateColumns: { xs: "1fr 1fr", sm: "repeat(4, 1fr)" },
+              gridTemplateColumns: { xs: "1fr 1fr", sm: "repeat(5, 1fr)" },
               gap: 1.75,
               mb: 2.5,
             }}
           >
+            <StatCard
+              label="イベント"
+              value={data.event.running ? "開催中" : data.event.endedAt ? "終了" : "開始前"}
+            />
             <StatCard label="参加チーム数" value={String(data.stats.teamCount)} />
             <StatCard label="総回答数" value={String(data.stats.submissionCount)} />
             <StatCard

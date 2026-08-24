@@ -32,7 +32,7 @@ body,
   }
 }
 
-/* 星空の背景演出（mockups/*.html の body::before を再現） */
+/* 星空の背景演出 */
 .starfield::before {
   content: "";
   position: fixed;

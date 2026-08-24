@@ -6,7 +6,7 @@ interface CodeDisplayProps {
   shakeKey: number;
 }
 
-/** 4桁コードの入力状況を表示する箱（mockups/participant-mock.html .code-display / .code-box 相当） */
+/** 4桁コードの入力状況を表示する箱 */
 export function CodeDisplay({ code, length = 4, shakeKey }: CodeDisplayProps) {
   return (
     <Box sx={{ display: "flex", justifyContent: "center", gap: "10px", mb: 2.75 }}>

@@ -1,7 +1,7 @@
 import { createTheme } from "@mui/material/styles";
 import { jaJP } from "@mui/material/locale";
 
-// デザイントークン（mockups/*.html の :root から抽出。謎解きイベント向けダーク×ネオンテーマ）
+// デザイントークン（謎解きイベント向けダーク×ネオンテーマ）
 export const neon = {
   bgDeep: "#0b0716",
   bgPanel: "#16102a",

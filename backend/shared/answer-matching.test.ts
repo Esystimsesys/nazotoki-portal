@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   findDuplicateCodesAcrossProblems,
   findDuplicateCodesWithinPatterns,
+  isDisabledProblemCode,
   matchSubmission,
   validateNoDuplicateCodes,
   type PatternRecord,
@@ -142,28 +143,30 @@ describe("findDuplicateCodesAcrossProblems", () => {
 });
 
 describe("validateNoDuplicateCodes（登録時コード重複バリデーション）", () => {
-  it("新規登録: 他の有効問題とコードが重複する場合は重複として検出する", () => {
-    const dup = validateNoDuplicateCodes("new-problem", ["0001", "0005"], true, [
+  it("新規登録: 他の問題とコードが重複する場合は重複として検出する", () => {
+    const dup = validateNoDuplicateCodes("new-problem", ["0001", "0005"], [
       { problemId: "p1", codes: ["0001", "0002"] },
     ]);
     expect(dup).toEqual(["0001"]);
   });
 
-  it("新規登録: enabled=falseならば他問題との重複チェックをスキップする", () => {
-    const dup = validateNoDuplicateCodes("new-problem", ["0001"], false, [
+  it("新規登録: 無効な問題であっても他問題との重複は検出する", () => {
+    // 以前は enabled=false ならチェックを飛ばしていたため、無効なうちは重複を
+    // 登録でき、有効化しようとした瞬間に初めて409になっていた。
+    const dup = validateNoDuplicateCodes("new-problem", ["0001"], [
       { problemId: "p1", codes: ["0001"] },
     ]);
-    expect(dup).toEqual([]);
+    expect(dup).toEqual(["0001"]);
   });
 
-  it("同一問題内の重複コードはenabledに関わらず検出する", () => {
-    const dup = validateNoDuplicateCodes("new-problem", ["0001", "0001"], false, []);
+  it("同一問題内の重複コードも検出する", () => {
+    const dup = validateNoDuplicateCodes("new-problem", ["0001", "0001"], []);
     expect(dup).toEqual(["0001"]);
   });
 
   it("編集時: 自分自身のコードは重複判定から除外する（他問題のコード集合を渡す想定）", () => {
-    // p1自身の編集: otherEnabledProblemSetsにp1が含まれていても対象から除外される
-    const dup = validateNoDuplicateCodes("p1", ["0001"], true, [
+    // p1自身の編集: otherProblemSetsにp1が含まれていても対象から除外される
+    const dup = validateNoDuplicateCodes("p1", ["0001"], [
       { problemId: "p1", codes: ["0001"] },
       { problemId: "p2", codes: ["0002"] },
     ]);
@@ -171,7 +174,7 @@ describe("validateNoDuplicateCodes（登録時コード重複バリデーショ�
   });
 
   it("重複が無ければ空配列", () => {
-    const dup = validateNoDuplicateCodes("p3", ["0009"], true, [
+    const dup = validateNoDuplicateCodes("p3", ["0009"], [
       { problemId: "p1", codes: ["0001"] },
       { problemId: "p2", codes: ["0002"] },
     ]);
@@ -186,5 +189,39 @@ describe("validateNoDuplicateCodes（登録時コード重複バリデーショ�
       { problemId: "p3", codes: ["0003"] },
     ]);
     expect(dup).toEqual(["0001"]);
+  });
+});
+
+describe("isDisabledProblemCode（無効な問題のコードは記録しない）", () => {
+  it("無効な問題にだけ存在するコードは true", () => {
+    const problems = [problem({ problemId: "p1", enabled: true })];
+    const patterns = [
+      pattern({ problemId: "p1", patternId: "a", code: "0001" }),
+      pattern({ problemId: "p2", patternId: "b", code: "9999" }),
+    ];
+    // p2 は enabledProblems に含まれない＝無効
+    expect(isDisabledProblemCode("9999", problems, patterns)).toBe(true);
+  });
+
+  it("有効な問題に一致するコードは false（通常どおり記録・判定する）", () => {
+    const problems = [problem({ problemId: "p1", enabled: true })];
+    const patterns = [pattern({ problemId: "p1", code: "0001" })];
+    expect(isDisabledProblemCode("0001", problems, patterns)).toBe(false);
+  });
+
+  it("どの問題にも存在しない未登録コードは false（不正解として記録し続ける）", () => {
+    const problems = [problem({ problemId: "p1", enabled: true })];
+    const patterns = [pattern({ problemId: "p1", code: "0001" })];
+    expect(isDisabledProblemCode("1234", problems, patterns)).toBe(false);
+  });
+
+  it("無効な問題と有効な問題が同じコードを持つ場合は false（有効側への回答を優先）", () => {
+    // コード重複の検証は有効な問題どうしでしか行わないため、この状態は起こりうる
+    const problems = [problem({ problemId: "p1", enabled: true })];
+    const patterns = [
+      pattern({ problemId: "p1", patternId: "a", code: "0001" }),
+      pattern({ problemId: "p2", patternId: "b", code: "0001" }),
+    ];
+    expect(isDisabledProblemCode("0001", problems, patterns)).toBe(false);
   });
 });

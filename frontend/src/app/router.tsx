@@ -10,6 +10,7 @@ import { AdminLoginPage } from "../features/admin-auth/AdminLoginPage";
 import { AdminProblemsPage } from "../features/admin-problems/AdminProblemsPage";
 import { AdminTeamsPage } from "../features/admin-teams/AdminTeamsPage";
 import { AdminDashboardPage } from "../features/admin-dashboard/AdminDashboardPage";
+import { AdminScreenPage } from "../features/admin-screen/AdminScreenPage";
 import { AdminShell } from "../shared/layout/AdminShell";
 
 function FullPageLoader() {
@@ -79,6 +80,7 @@ export function AppRouter() {
         <Route path="/admin/problems" element={<AdminProblemsPage />} />
         <Route path="/admin/teams" element={<AdminTeamsPage />} />
         <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
+        <Route path="/admin/screen" element={<AdminScreenPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/login" replace />} />

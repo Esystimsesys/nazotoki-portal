@@ -84,7 +84,18 @@ export interface SummaryStats {
   maxPrize: number;
 }
 
+/**
+ * イベント全体の開始/終了状態。問題ごとの `enabled` とは独立した軸で、
+ * `running` が false の間は有効な問題があっても回答を受け付けない。
+ */
+export interface EventState {
+  running: boolean;
+  startedAt: string | null;
+  endedAt: string | null;
+}
+
 export interface SummaryResponse {
+  event: EventState;
   ranking: RankingEntry[];
   problemStats: ProblemStat[];
   stats: SummaryStats;

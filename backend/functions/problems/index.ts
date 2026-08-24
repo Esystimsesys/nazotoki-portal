@@ -7,6 +7,8 @@
  * - PUT    /api/admin/problems/{problemId}/enabled  個別有効/無効切替
  * - PUT    /api/admin/problems/enabled         一括有効/無効切替
  * - POST   /api/admin/problems/csv             CSV一括取込
+ * - GET    /api/event                          イベント開始/終了状態の取得（team/admin共通）
+ * - PUT    /api/admin/event                    イベントの開始/終了切替
  *
  * Problemsテーブルは「問題メタ行(sk=META)＋パターン行(sk=PATTERN#<patternId>)」の単一テーブル構成。
  * データ量が小さいためScanで全件取得する。
@@ -22,6 +24,7 @@ import {
   type ProblemCodeSet,
 } from "../../shared/answer-matching";
 import { ddb, requiredEnv, scanAll } from "../../shared/dynamo";
+import { getEventState, setEventRunning } from "../../shared/event-state";
 import { AUTO_CODE_KEYWORDS, generateUnusedCode } from "../../shared/random-code";
 import {
   err,
@@ -193,15 +196,15 @@ async function createProblem(event: ApiEvent): Promise<ApiResult> {
 
   const allProblems = await loadAllProblems();
   const newProblemId = randomUUID();
-  const otherEnabledSets = toCodeSets(allProblems.filter((p) => p.enabled));
+  // 有効・無効を問わず全問題を対象に重複を禁止する（無効なうちに重複を登録できると、
+  // 有効化しようとした瞬間に初めて409が出ることになり、イベント中の事故になるため）
   const conflicts = validateNoDuplicateCodes(
     newProblemId,
     patternsInput.map((p) => p.code),
-    enabled,
-    otherEnabledSets,
+    toCodeSets(allProblems),
   );
   if (conflicts.length > 0) {
-    return err(409, "有効な問題間でコードが重複しています", { conflicts });
+    return err(409, "他の問題とコードが重複しています", { conflicts });
   }
 
   const createdAt = new Date().toISOString();
@@ -250,17 +253,13 @@ async function updateProblem(event: ApiEvent, problemId: string): Promise<ApiRes
   const existing = allProblems.find((p) => p.problemId === problemId);
   if (!existing) return err(404, "問題が見つかりません");
 
-  const otherEnabledSets = toCodeSets(
-    allProblems.filter((p) => p.enabled && p.problemId !== problemId),
-  );
   const conflicts = validateNoDuplicateCodes(
     problemId,
     patternsInput.map((p) => p.code),
-    enabled,
-    otherEnabledSets,
+    toCodeSets(allProblems.filter((p) => p.problemId !== problemId)),
   );
   if (conflicts.length > 0) {
-    return err(409, "有効な問題間でコードが重複しています", { conflicts });
+    return err(409, "他の問題とコードが重複しています", { conflicts });
   }
 
   const patterns = buildPatternItems(patternsInput);
@@ -318,17 +317,15 @@ async function setEnabled(event: ApiEvent, problemId: string): Promise<ApiResult
   const existing = allProblems.find((p) => p.problemId === problemId);
   if (!existing) return err(404, "問題が見つかりません");
 
-  const otherEnabledSets = toCodeSets(
-    allProblems.filter((p) => p.enabled && p.problemId !== problemId),
-  );
+  // コードは登録時点で全問題を横断して一意になっているため、有効化しても衝突しない。
+  // 念のための防御として、既存データに重複が残っている場合だけ弾く。
   const conflicts = validateNoDuplicateCodes(
     problemId,
     existing.patterns.map((p) => p.code),
-    enabled,
-    otherEnabledSets,
+    toCodeSets(allProblems.filter((p) => p.problemId !== problemId)),
   );
   if (conflicts.length > 0) {
-    return err(409, "有効な問題間でコードが重複しています", { conflicts });
+    return err(409, "他の問題とコードが重複しています", { conflicts });
   }
 
   await ddb().send(
@@ -354,7 +351,7 @@ async function setAllEnabled(event: ApiEvent): Promise<ApiResult> {
   if (enabled) {
     const conflicts = findDuplicateCodesAcrossProblems(toCodeSets(allProblems));
     if (conflicts.length > 0) {
-      return err(409, "有効な問題間でコードが重複しています", { conflicts });
+      return err(409, "他の問題とコードが重複しています", { conflicts });
     }
   }
 
@@ -370,6 +367,19 @@ async function setAllEnabled(event: ApiEvent): Promise<ApiResult> {
   }
 
   return ok({ problems: allProblems.map((p) => ({ ...p, enabled })) });
+}
+
+/** GET /api/event（team/admin共通。参加者も自分の画面で開始待ちかどうかを知る必要がある） */
+async function getEvent(): Promise<ApiResult> {
+  return ok({ event: await getEventState() });
+}
+
+/** PUT /api/admin/event（開始/終了切替） */
+async function putEvent(event: ApiEvent): Promise<ApiResult> {
+  const body = getJsonBody(event);
+  const running = body?.running;
+  if (typeof running !== "boolean") return err(400, "running を指定してください");
+  return ok({ event: await setEventRunning(running) });
 }
 
 interface CsvRow {
@@ -520,19 +530,18 @@ async function importCsv(event: ApiEvent): Promise<ApiResult> {
     }
   }
 
-  // 既存の有効な問題とのコード重複（CSV取込問題は登録と同時に有効化される想定のため）
+  // 既存の問題とのコード重複（有効・無効を問わず全問題が対象）
   const existingProblems = await loadAllProblems();
-  const existingEnabledCodeToLabel = new Map<string, string>();
+  const existingCodeToLabel = new Map<string, string>();
   for (const p of existingProblems) {
-    if (!p.enabled) continue;
-    for (const pat of p.patterns) existingEnabledCodeToLabel.set(pat.code, p.label);
+    for (const pat of p.patterns) existingCodeToLabel.set(pat.code, p.label);
   }
   for (const entry of entries) {
-    const conflictLabel = existingEnabledCodeToLabel.get(entry.code);
+    const conflictLabel = existingCodeToLabel.get(entry.code);
     if (conflictLabel) {
       rowErrors.push({
         row: entry.row,
-        message: `コード "${entry.code}" は既に有効な問題「${conflictLabel}」で使用されています`,
+        message: `コード "${entry.code}" は既に問題「${conflictLabel}」で使用されています`,
       });
     }
   }
@@ -580,7 +589,16 @@ export const handler = async (event: ApiEvent): Promise<ApiResult> =>
 
     if (method === "OPTIONS") return noContent();
 
+    // イベントの開始/終了状態の参照だけは参加者にも許す（回答画面が開始待ちを表示するため）。
+    // role を指定せず検証するので、team/adminどちらの有効なトークンでも通る。
+    if (method === "GET" && path === "/api/event") {
+      requireAuth(event);
+      return getEvent();
+    }
+
     requireAuth(event, "admin");
+
+    if (method === "PUT" && path === "/api/admin/event") return putEvent(event);
 
     if (method === "GET" && path === "/api/admin/problems") return listProblems();
     if (method === "POST" && path === "/api/admin/problems") return createProblem(event);
