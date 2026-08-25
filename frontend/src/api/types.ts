@@ -110,6 +110,55 @@ export interface SummaryResponse {
   stats: SummaryStats;
 }
 
+/** 問題1件の到達状況（どのチームが正解したか／誤答したか） */
+export interface AnalysisProblem {
+  problemId: string;
+  label: string;
+  enabled: boolean;
+  solvedTeamIds: string[];
+  wrongTeamIds: string[];
+}
+
+/** 不正解の選択肢を持つ問題1件と、その誤答状況（パターン単位ではなく問題単位） */
+export interface AnalysisWrongAnswerProblem {
+  problemId: string;
+  label: string;
+  /** その問題に登録されている不正解の選択肢の数（減点0のものも含む） */
+  wrongChoiceCount: number;
+  /** 延べで何回 誤答が出たか */
+  wrongAnswerCount: number;
+  /** 何チームが誤答したか */
+  teamCount: number;
+  /** その問題で減った賞金の合計（減点0の誤答しか無ければ0） */
+  totalPenalty: number;
+}
+
+export interface AnalysisResponse {
+  teams: { teamId: string; teamName: string }[];
+  problems: AnalysisProblem[];
+  wrongAnswerProblems: AnalysisWrongAnswerProblem[];
+}
+
+/** 賞金推移の1点（その時刻での累積賞金） */
+export interface TimelinePoint {
+  at: string;
+  total: number;
+}
+
+/** チーム1つぶんの賞金推移。賞金が動いた点だけが入る */
+export interface TimelineSeries {
+  teamId: string;
+  teamName: string;
+  total: number;
+  points: TimelinePoint[];
+}
+
+export interface TimelineResponse {
+  series: TimelineSeries[];
+  startedAt: string | null;
+  endedAt: string | null;
+}
+
 /** そのチームが実際に踏んだ登録パターン1件（未登録コードは含まれない） */
 export interface TeamPatternHit {
   code: string;

@@ -4,6 +4,8 @@
  * - GET  /api/admin/summary                       集計（ランキング・問題別正誤・全体統計）（admin）
  * - GET  /api/admin/teams/{teamId}/submissions     チーム別回答履歴（admin）
  * - DELETE /api/admin/submissions                  全回答記録の削除（admin）
+ * - GET  /api/admin/timeline                       賞金推移の時系列（admin）
+ * - GET  /api/admin/analysis                       問題の到達状況とトラップの発動状況（admin）
  */
 import { BatchWriteCommand, GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
@@ -307,6 +309,155 @@ async function summary(): Promise<ApiResult> {
   });
 }
 
+/**
+ * GET /api/admin/timeline（admin）
+ *
+ * チームごとの「賞金の累積推移」を返す。回答記録には1件ずつ時刻と増減額が
+ * 入っているので、時刻順に足し上げれば新しくデータを取らなくても復元できる
+ * （すでに終わったイベントの分も遡って描ける）。
+ *
+ * 返すのは**賞金が動いた点だけ**。未登録コードや2回目以降の一致は増減0で、
+ * 折れ線の形に影響しないのに点数だけ増えるため間引く。各チームの先頭には
+ * 開始時点の0を必ず入れて、全系列が同じ原点から始まるようにする。
+ */
+async function timeline(): Promise<ApiResult> {
+  const [teamsRaw, submissionsRaw] = await Promise.all([
+    scanAll(requiredEnv("TABLE_TEAMS")),
+    scanAll(requiredEnv("TABLE_SUBMISSIONS")),
+  ]);
+  const teams = teamsRaw as unknown as TeamItem[];
+  const submissions = (submissionsRaw as unknown as SubmissionItem[])
+    .slice()
+    .sort((a, b) => a.submittedAt.localeCompare(b.submittedAt));
+
+  if (submissions.length === 0) {
+    return ok({ series: [], startedAt: null, endedAt: null });
+  }
+
+  const startedAt = submissions[0].submittedAt;
+  const endedAt = submissions[submissions.length - 1].submittedAt;
+
+  const byTeam = new Map<string, SubmissionItem[]>();
+  for (const s of submissions) {
+    const list = byTeam.get(s.teamId) ?? [];
+    list.push(s);
+    byTeam.set(s.teamId, list);
+  }
+
+  const series = teams
+    .map((team) => {
+      const list = byTeam.get(team.teamId) ?? [];
+      let total = 0;
+      const points: { at: string; total: number }[] = [{ at: startedAt, total: 0 }];
+      for (const s of list) {
+        if (s.prizeAwarded === 0) continue;
+        total += s.prizeAwarded;
+        points.push({ at: s.submittedAt, total });
+      }
+      // 最後の点を終了時刻まで伸ばして、全系列の右端をそろえる
+      if (points[points.length - 1].at !== endedAt) {
+        points.push({ at: endedAt, total });
+      }
+      return { teamId: team.teamId, teamName: team.teamName, total, points };
+    })
+    // 凡例と色の並びを順位に合わせる（賞金の多い順）
+    .sort((a, b) => b.total - a.total);
+
+  return ok({ series, startedAt, endedAt });
+}
+
+/**
+ * GET /api/admin/analysis（admin）
+ *
+ * イベント後の振り返り用。次回の問題数・難易度・選択肢の作り方を決める材料を返す。
+ *
+ * - 問題ごとに「どのチームが正解したか」「どのチームが誤答したか」
+ *   → 到達状況の格子と、解かれなかった問題の把握に使う
+ * - 問題ごとの誤答の回数（パターン単位ではなく問題単位）
+ *   → どの問題で誤答が出たか、誰も間違えなかったかの判定に使う
+ *
+ * 集計はダッシュボードと同じスキャンで足りるが、問題数×チーム数ぶんの配列を
+ * 毎回のポーリングに載せると無駄なので、summary とは別のエンドポイントにして
+ * 必要なときだけ取りに行く。
+ */
+async function analysis(): Promise<ApiResult> {
+  const [teamsRaw, { problems, patterns }, submissionsRaw] = await Promise.all([
+    scanAll(requiredEnv("TABLE_TEAMS")),
+    loadAllProblemsWithPatterns(),
+    scanAll(requiredEnv("TABLE_SUBMISSIONS")),
+  ]);
+  const teams = (teamsRaw as unknown as TeamItem[]).map((t) => ({
+    teamId: t.teamId,
+    teamName: t.teamName,
+  }));
+  const submissions = submissionsRaw as unknown as SubmissionItem[];
+
+  const solvedBy = new Map<string, Set<string>>();
+  const wrongBy = new Map<string, Set<string>>();
+
+  for (const s of submissions) {
+    if (!s.problemId) continue; // 未登録コードはどの問題にも紐づかない
+    const bucket = s.isCorrect ? solvedBy : wrongBy;
+    const set = bucket.get(s.problemId) ?? new Set<string>();
+    set.add(s.teamId);
+    bucket.set(s.problemId, set);
+  }
+
+  const patternsByProblem = new Map<string, PatternRecord[]>();
+  for (const pt of patterns) {
+    const list = patternsByProblem.get(pt.problemId) ?? [];
+    list.push(pt);
+    patternsByProblem.set(pt.problemId, list);
+  }
+
+  const problemRows = [...problems].sort(compareProblemsForDisplay).map((p) => ({
+    problemId: p.problemId,
+    label: p.label,
+    enabled: p.enabled,
+    solvedTeamIds: [...(solvedBy.get(p.problemId) ?? [])],
+    wrongTeamIds: [...(wrongBy.get(p.problemId) ?? [])],
+  }));
+
+  // 誤答の集計は**問題単位**で行う。
+  // 4択問題なら3つが不正解の選択肢という作りになるため、パターン1件ずつ並べても
+  // 「同じ問題の選択肢が3行に散る」だけで読み取れることが増えない。
+  // 知りたいのは「どの問題で誤答が出たか」なので、問題ごとにまとめる。
+  //
+  // **減点の有無を問わず、不正解の選択肢すべてを対象にする。** 減点0の不正解も
+  // 誤答であることに変わりはなく、「誤答」と呼ぶ以上そちらに合わせるのが自然。
+  //
+  // 不正解の選択肢を持つ問題はすべて返す（誤答0回も含む）。用意したのに誰も
+  // 間違えなかったことが分かるのが目的で、出たものだけ並べると判断を誤る。
+  const wrongChoiceCountByProblem = new Map<string, number>();
+  for (const pt of patterns) {
+    if (pt.isCorrect) continue;
+    wrongChoiceCountByProblem.set(
+      pt.problemId,
+      (wrongChoiceCountByProblem.get(pt.problemId) ?? 0) + 1,
+    );
+  }
+
+  const wrongAnswerProblems = problemRows
+    .filter((p) => wrongChoiceCountByProblem.has(p.problemId))
+    .map((p) => {
+      const wrongs = submissions.filter((s) => s.problemId === p.problemId && !s.isCorrect);
+      return {
+        problemId: p.problemId,
+        label: p.label,
+        // その問題に登録されている不正解の選択肢の数
+        wrongChoiceCount: wrongChoiceCountByProblem.get(p.problemId) ?? 0,
+        // 延べで何回 誤答が出たか
+        wrongAnswerCount: wrongs.length,
+        // 何チームが誤答したか（同じチームが複数の選択肢を誤っても1と数える）
+        teamCount: p.wrongTeamIds.length,
+        // その問題で減った賞金の合計（減点0の誤答しか無ければ0）
+        totalPenalty: wrongs.reduce((sum, s) => sum + s.prizeAwarded, 0),
+      };
+    });
+
+  return ok({ teams, problems: problemRows, wrongAnswerProblems });
+}
+
 /** GET /api/admin/teams/{teamId}/submissions（admin） */
 async function teamSubmissions(teamId: string): Promise<ApiResult> {
   const teamRes = await ddb().send(
@@ -437,6 +588,16 @@ export const handler = async (event: ApiEvent): Promise<ApiResult> =>
     if (method === "DELETE" && path === "/api/admin/submissions") {
       requireAuth(event, "admin");
       return clearSubmissions();
+    }
+
+    if (method === "GET" && path === "/api/admin/analysis") {
+      requireAuth(event, "admin");
+      return analysis();
+    }
+
+    if (method === "GET" && path === "/api/admin/timeline") {
+      requireAuth(event, "admin");
+      return timeline();
     }
 
     if (method === "GET" && path === "/api/admin/summary") {

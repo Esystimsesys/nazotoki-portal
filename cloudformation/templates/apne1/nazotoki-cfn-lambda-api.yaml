@@ -549,6 +549,20 @@ Resources:
       RouteKey: "DELETE /api/admin/submissions"
       AuthorizationType: NONE
       Target: !Sub integrations/${submissionsIntegration}
+  routeAdminAnalysis:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "GET /api/admin/analysis"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${submissionsIntegration}
+  routeAdminTimeline:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "GET /api/admin/timeline"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${submissionsIntegration}
   routeAdminSummary:
     Type: AWS::ApiGatewayV2::Route
     Properties:

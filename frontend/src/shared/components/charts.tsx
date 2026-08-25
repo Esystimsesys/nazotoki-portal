@@ -15,6 +15,35 @@ export const CHART_COLORS = {
   empty: "rgba(255,255,255,0.10)",
 } as const;
 
+
+/**
+ * 系列（チーム）識別用のカテゴリカル配色。
+ * dataviz スキルの validate_palette.js で、実際の描画面（NeonPanel の #16102a）
+ * に対して検証済み: 明度帯・彩度下限・CVD分離 ΔE 8.4(protan)・通常視 ΔE 19.3・
+ * コントラスト いずれもPASS。
+ *
+ * **順番は固定で、循環させない。** 9チーム目からは色を作り足さず、
+ * まとめて控えめな色にして凡例で「ほか」として扱う（色だけで identity を
+ * 背負わせない）。並びは順位順に割り当てるのではなく、系列ごとに固定する。
+ */
+export const SERIES_COLORS = [
+  "#3987e5",
+  "#d95926",
+  "#199e70",
+  "#c98500",
+  "#d55181",
+  "#008300",
+  "#9085e9",
+  "#e66767",
+] as const;
+
+/** 9系列目以降。色で区別せず、凡例とツールチップで識別させる */
+export const SERIES_OVERFLOW_COLOR = "rgba(255,255,255,0.35)";
+
+export function seriesColor(index: number): string {
+  return SERIES_COLORS[index] ?? SERIES_OVERFLOW_COLOR;
+}
+
 export function formatYen(n: number): string {
   return (n < 0 ? "-¥" : "¥") + Math.abs(n).toLocaleString();
 }
@@ -183,7 +212,8 @@ export function ProblemGrid({ cells }: { cells: ProblemCellState[] }) {
 export function Legend({
   items,
 }: {
-  items: { color: string; label: string; outlined?: boolean }[];
+  /** ring を指定すると塗りの内側に縁取りを描く（塗りとは別の意味を重ねたいとき） */
+  items: { color: string; label: string; outlined?: boolean; ring?: string }[];
 }) {
   return (
     <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap", mt: 1 }}>
@@ -196,6 +226,7 @@ export function Legend({
               borderRadius: "3px",
               background: i.color,
               border: i.outlined ? "1px solid rgba(255,255,255,0.2)" : "none",
+              boxShadow: i.ring ? `inset 0 0 0 2px ${i.ring}` : "none",
               flex: "0 0 auto",
             }}
           />

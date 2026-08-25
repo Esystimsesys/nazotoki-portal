@@ -16,6 +16,8 @@ import { ApiErrorAlert } from "../../shared/components/ApiErrorAlert";
 import { BarChart } from "../../shared/components/charts";
 import { ConfirmDialog } from "../../shared/components/ConfirmDialog";
 import { NeonPanel } from "../../shared/components/NeonPanel";
+import { TimelineChart } from "../../shared/components/TimelineChart";
+import { ProblemReachPanel, WrongAnswerPanel } from "./AnalysisPanels";
 import { formatPrize, prizeColor } from "../../shared/format";
 import { downloadCsv, problemStatsToCsv, rankingToCsv, timestampedFilename } from "../../shared/csv";
 import { TeamHistoryModal } from "./TeamHistoryModal";
@@ -48,11 +50,28 @@ export function AdminDashboardPage() {
   const [selectedTeam, setSelectedTeam] = useState<{ teamId: string; teamName: string } | null>(null);
   const [clearOpen, setClearOpen] = useState(false);
 
+  // 振り返り用の集計。問題数×チーム数ぶんの配列が返るのでポーリングはしない
+  // （イベント中に刻々と変わる情報ではなく、開いたときに見れば足りる）
+  const { data: analysisData } = useQuery({
+    queryKey: ["admin", "analysis"],
+    queryFn: () => submissionsApi.analysis(),
+  });
+
+  // 賞金推移。順位表と同じ間隔で追いかける
+  const { data: timelineData } = useQuery({
+    queryKey: ["admin", "timeline"],
+    queryFn: () => submissionsApi.timeline(),
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: false,
+  });
+
   const queryClient = useQueryClient();
   const clearMutation = useMutation({
     mutationFn: () => submissionsApi.clearAll(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin", "summary"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "timeline"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "analysis"] });
       setClearOpen(false);
     },
   });
@@ -147,6 +166,19 @@ export function AdminDashboardPage() {
 
           {/* 表より先に順位を一目で掴めるようグラフを置く。値は正にも負にもなるので
               ゼロ基準線を持つ横棒（獲得＝ゴールド／マイナス＝レッドの2極）で表す。 */}
+          {timelineData && timelineData.series.length > 0 && (
+            <>
+              <Typography sx={{ fontSize: 14, fontWeight: 800, mb: 1 }}>賞金の推移</Typography>
+              <NeonPanel sx={{ mb: 3, p: 2 }}>
+                <TimelineChart series={timelineData.series} />
+                <Typography sx={{ fontSize: 10.5, color: "text.secondary", mt: 1.25 }}>
+                  縦軸は億円表記。賞金は回答した瞬間に動くため階段状に描いています。グラフに
+                  マウスを重ねると、その時点の各チームの賞金を表示します。
+                </Typography>
+              </NeonPanel>
+            </>
+          )}
+
           <Typography sx={{ fontSize: 14, fontWeight: 800, mb: 1 }}>賞金ランキング</Typography>
           <NeonPanel sx={{ mb: 3, p: 2 }}>
             <BarChart
@@ -204,6 +236,16 @@ export function AdminDashboardPage() {
               </TableBody>
             </Table>
           </TableContainer>
+
+          {analysisData && analysisData.problems.length > 0 && (
+            <>
+              <Typography sx={{ fontSize: 14, fontWeight: 800, mb: 1 }}>問題の到達状況</Typography>
+              <ProblemReachPanel data={analysisData} />
+
+              <Typography sx={{ fontSize: 14, fontWeight: 800, mb: 1 }}>誤答と減点</Typography>
+              <WrongAnswerPanel data={analysisData} />
+            </>
+          )}
 
           <Typography sx={{ fontSize: 14, fontWeight: 800, mb: 1 }}>問題別サマリ</Typography>
           <TableContainer component={NeonPanel} sx={{ p: 0 }}>

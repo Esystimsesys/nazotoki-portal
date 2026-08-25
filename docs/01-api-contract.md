@@ -53,7 +53,7 @@
 | `nazotoki-admin-auth` | `POST /api/admin/login` | `TABLE_ADMINS`, `JWT_SECRET` |
 | `nazotoki-teams` | `POST /api/auth/team-login`、`GET/POST /api/admin/teams`、`DELETE /api/admin/teams/{teamId}`、`DELETE /api/admin/teams/{teamId}/purge`、`POST /api/admin/teams/{teamId}/regenerate-code` | `TABLE_TEAMS`, `TABLE_SUBMISSIONS`, `JWT_SECRET` |
 | `nazotoki-problems` | `GET/POST /api/admin/problems`、`PUT/DELETE /api/admin/problems/{problemId}`、`PUT /api/admin/problems/{problemId}/enabled`、`PUT /api/admin/problems/enabled`（一括）、`POST /api/admin/problems/csv`、`GET /api/event`、`PUT /api/admin/event` | `TABLE_PROBLEMS`, `JWT_SECRET` |
-| `nazotoki-submissions` | `POST /api/submissions`、`DELETE /api/admin/submissions`、`GET /api/admin/summary`、`GET /api/admin/teams/{teamId}/submissions` | `TABLE_SUBMISSIONS`, `TABLE_PROBLEMS`, `TABLE_TEAMS`, `JWT_SECRET` |
+| `nazotoki-submissions` | `POST /api/submissions`、`DELETE /api/admin/submissions`、`GET /api/admin/summary`、`GET /api/admin/timeline`、`GET /api/admin/analysis`、`GET /api/admin/teams/{teamId}/submissions` | `TABLE_SUBMISSIONS`, `TABLE_PROBLEMS`, `TABLE_TEAMS`, `JWT_SECRET` |
 
 共通ロジックは `backend/shared/` に集約:
 - `auth.ts`: JWT署名・検証、`requireAuth(event, role?)` ミドルウェア（`Authorization`検証、role不一致で403 throw）。
@@ -164,6 +164,19 @@
 **DELETE /api/admin/submissions**（全回答クリア）
 - 回答記録を**全件削除**する。res 200: `{ "ok": true, "deleted": number }`。チームと問題は削除しない。
 - 同じ問題・同じチームで本番をやり直すとき（リハーサル後の片付けなど）に使う。復元できないため、画面側では確認ダイアログを必須にしている。
+
+**GET /api/admin/analysis**（イベント後の振り返り用）
+- res 200: `{ "teams": [{teamId, teamName}], "problems": [...], "wrongAnswerProblems": [...] }`
+- `problems[]`: `{ problemId, label, enabled, solvedTeamIds[], wrongTeamIds[] }`。同じチームが両方に入りうる（4択で正解と他の選択肢の両方を入力した場合）。
+- `wrongAnswerProblems[]`: `{ problemId, label, wrongChoiceCount, wrongAnswerCount, teamCount, totalPenalty }`。**不正解の選択肢を持つ問題のみ**を問題番号順で返す。誤答0回の問題も含める（用意したのに誰も間違えなかったことが分かるのが目的）。
+  - `wrongChoiceCount` は登録されている不正解パターンの数。**減点の有無は問わない**（減点0の不正解も誤答として数える）。
+  - パターン単位ではなく問題単位で集約する。4択なら3つが不正解という作りになるため、パターンごとに並べても同じ問題の選択肢が複数行に散るだけで読み取れることが増えないため。
+- ポーリングしない想定。問題数×チーム数の配列を返すため、`summary` とは別にして必要なときだけ取得する。
+
+**GET /api/admin/timeline**（賞金推移）
+- res 200: `{ "series": [{ teamId, teamName, total, points: [{at, total}] }], "startedAt": string|null, "endedAt": string|null }`
+- 回答記録の `submittedAt` と `prizeAwarded` を時刻順に累積して復元する。新しくデータを取る必要はなく、終了済みのイベントも遡って描ける。
+- `points` は**賞金が動いた点だけ**（増減0の回答は折れ線の形に影響しないため間引く）。各系列の先頭に開始時点の0、末尾に終了時刻の点を入れて左右をそろえる。
 
 ### 集計（admin）
 
