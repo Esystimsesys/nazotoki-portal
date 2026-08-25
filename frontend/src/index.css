@@ -19,8 +19,11 @@ body,
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 }
 
-/* 見出し用の装飾フォント（モックの brand-title / result-title 相当） */
-.brand-font {
+/* 見出し用の装飾フォント。
+   クラス名を2度書いて詳細度を上げている。MUI(emotion)が生成するクラスは
+   同じ詳細度で、かつ後から <head> に注入されるため、単一クラスのままだと
+   テーマの font-family に負けて Cinzel Decorative が当たらない。 */
+.brand-font.brand-font {
   font-family: "Cinzel Decorative", serif;
 }
 
