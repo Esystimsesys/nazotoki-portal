@@ -4,12 +4,20 @@
  * - GET    /api/admin/teams                         チーム一覧（admin）
  * - POST   /api/admin/teams                         チーム新規登録（admin）。loginCodeはサーバー自動生成
  * - DELETE /api/admin/teams/{teamId}                論理削除（active=false、admin）
+ * - DELETE /api/admin/teams/{teamId}/purge          完全削除（回答記録ごと物理削除、admin）
  * - POST   /api/admin/teams/{teamId}/regenerate-code ログインコード再発行（admin）
  */
-import { PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  BatchWriteCommand,
+  DeleteCommand,
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
 import { requireAuth, signToken } from "../../shared/auth";
-import { ddb, requiredEnv, scanAll } from "../../shared/dynamo";
+import { ddb, queryAll, requiredEnv, scanAll } from "../../shared/dynamo";
 import {
   err,
   getJsonBody,
@@ -57,6 +65,13 @@ function randomLoginCode(): string {
     code += LOGIN_CODE_CHARS[Math.floor(Math.random() * LOGIN_CODE_CHARS.length)];
   }
   return code;
+}
+
+async function findTeamById(teamId: string): Promise<TeamItem | null> {
+  const res = await ddb().send(
+    new GetCommand({ TableName: requiredEnv("TABLE_TEAMS"), Key: { pk: `TEAM#${teamId}` } }),
+  );
+  return (res.Item as TeamItem | undefined) ?? null;
 }
 
 async function findTeamByLoginCode(loginCode: string): Promise<TeamItem | null> {
@@ -154,6 +169,50 @@ async function deleteTeam(teamId: string): Promise<ApiResult> {
   return ok({ ok: true });
 }
 
+/**
+ * DELETE /api/admin/teams/{teamId}/purge（完全削除）
+ *
+ * チーム行と、そのチームの回答記録をまとめて物理削除する。
+ * 論理削除（active=false）はログインを止めるだけで集計には残り続けるため、
+ * 「順位からも消したい」「テストで作ったチームを片付けたい」場合はこちらを使う。
+ *
+ * 回答記録も一緒に消すのは、チーム行だけ消すと参照先を失った回答が
+ * Submissionsテーブルに残り、ランキングには出ないのに総回答数だけが
+ * 増えたままになるため（数字が合わなくなる）。
+ */
+async function purgeTeam(teamId: string): Promise<ApiResult> {
+  const team = await findTeamById(teamId);
+  if (!team) return err(404, "チームが見つかりません");
+
+  const submissions = await queryAll({
+    TableName: requiredEnv("TABLE_SUBMISSIONS"),
+    KeyConditionExpression: "pk = :pk",
+    ExpressionAttributeValues: { ":pk": `TEAM#${teamId}` },
+    ProjectionExpression: "pk, sk",
+  });
+
+  // BatchWriteItem は1回25件まで
+  for (let i = 0; i < submissions.length; i += 25) {
+    await ddb().send(
+      new BatchWriteCommand({
+        RequestItems: {
+          [requiredEnv("TABLE_SUBMISSIONS")]: submissions
+            .slice(i, i + 25)
+            .map((item) => ({ DeleteRequest: { Key: { pk: item.pk, sk: item.sk } } })),
+        },
+      }),
+    );
+  }
+
+  // 回答を消してからチーム行を消す。逆順だと途中で失敗したときに
+  // 参照先を失った回答だけが残る（総回答数がずれた状態になる）。
+  await ddb().send(
+    new DeleteCommand({ TableName: requiredEnv("TABLE_TEAMS"), Key: { pk: `TEAM#${teamId}` } }),
+  );
+
+  return ok({ ok: true, deletedSubmissions: submissions.length });
+}
+
 /** POST /api/admin/teams/{teamId}/regenerate-code */
 async function regenerateCode(teamId: string): Promise<ApiResult> {
   const loginCode = await generateUniqueLoginCode();
@@ -198,6 +257,13 @@ export const handler = async (event: ApiEvent): Promise<ApiResult> =>
     if (method === "POST" && regenerateMatch) {
       requireAuth(event, "admin");
       return regenerateCode(decodeURIComponent(regenerateMatch[1]));
+    }
+
+    // /purge は {teamId} 単体の正規表現より先に判定する
+    const purgeMatch = path.match(/^\/api\/admin\/teams\/([^/]+)\/purge$/);
+    if (method === "DELETE" && purgeMatch) {
+      requireAuth(event, "admin");
+      return purgeTeam(decodeURIComponent(purgeMatch[1]));
     }
 
     const teamIdMatch = path.match(/^\/api\/admin\/teams\/([^/]+)$/);

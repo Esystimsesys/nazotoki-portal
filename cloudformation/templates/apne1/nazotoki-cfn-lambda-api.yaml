@@ -99,6 +99,20 @@ Resources:
                 Resource:
                   - !Ref TeamsTableArn
                   - !Sub "${TeamsTableArn}/index/*"
+        # チームの完全削除（DELETE /admin/teams/{teamId}/purge）では、そのチームの
+        # 回答記録も一緒に消す。チーム行だけ消すと参照先を失った回答が残り、
+        # ランキングには出ないのに総回答数だけが増えたままになるため。
+        - PolicyName: submissions-table-purge
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:DeleteItem
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !Ref SubmissionsTableArn
 
   problemsExecutionRole:
     Type: AWS::IAM::Role
@@ -156,6 +170,8 @@ Resources:
                   - dynamodb:DeleteItem
                   - dynamodb:Query
                   - dynamodb:Scan
+                  # 全回答クリア（DELETE /admin/submissions）で25件ずつまとめて消す
+                  - dynamodb:BatchWriteItem
                 Resource:
                   - !Ref SubmissionsTableArn
         - PolicyName: problems-and-teams-table-read
@@ -244,6 +260,7 @@ Resources:
       Environment:
         Variables:
           TABLE_TEAMS: !Ref TeamsTableName
+          TABLE_SUBMISSIONS: !Ref SubmissionsTableName
           JWT_SECRET: !Ref JwtSecret
 
   problemsFunction:
@@ -507,12 +524,29 @@ Resources:
       AuthorizationType: NONE
       Target: !Sub integrations/${problemsIntegration}
 
+  routeAdminTeamsPurge:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      # 完全削除（チーム行＋回答記録）。論理削除の DELETE /api/admin/teams/{teamId}
+      # とは別ルートにして、取り違えが起きないようにしている。
+      RouteKey: "DELETE /api/admin/teams/{teamId}/purge"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${teamsIntegration}
+
   # --- Routes: submissions ---
   routeSubmissionsCreate:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref httpApi
       RouteKey: "POST /api/submissions"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${submissionsIntegration}
+  routeAdminSubmissionsClear:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "DELETE /api/admin/submissions"
       AuthorizationType: NONE
       Target: !Sub integrations/${submissionsIntegration}
   routeAdminSummary:

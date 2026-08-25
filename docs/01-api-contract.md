@@ -51,9 +51,9 @@
 | 関数（物理名） | 担当ルート | 環境変数 |
 | --- | --- | --- |
 | `nazotoki-admin-auth` | `POST /api/admin/login` | `TABLE_ADMINS`, `JWT_SECRET` |
-| `nazotoki-teams` | `POST /api/auth/team-login`、`GET/POST /api/admin/teams`、`DELETE /api/admin/teams/{teamId}`、`POST /api/admin/teams/{teamId}/regenerate-code` | `TABLE_TEAMS`, `JWT_SECRET` |
+| `nazotoki-teams` | `POST /api/auth/team-login`、`GET/POST /api/admin/teams`、`DELETE /api/admin/teams/{teamId}`、`DELETE /api/admin/teams/{teamId}/purge`、`POST /api/admin/teams/{teamId}/regenerate-code` | `TABLE_TEAMS`, `TABLE_SUBMISSIONS`, `JWT_SECRET` |
 | `nazotoki-problems` | `GET/POST /api/admin/problems`、`PUT/DELETE /api/admin/problems/{problemId}`、`PUT /api/admin/problems/{problemId}/enabled`、`PUT /api/admin/problems/enabled`（一括）、`POST /api/admin/problems/csv`、`GET /api/event`、`PUT /api/admin/event` | `TABLE_PROBLEMS`, `JWT_SECRET` |
-| `nazotoki-submissions` | `POST /api/submissions`、`GET /api/admin/summary`、`GET /api/admin/teams/{teamId}/submissions` | `TABLE_SUBMISSIONS`, `TABLE_PROBLEMS`, `TABLE_TEAMS`, `JWT_SECRET` |
+| `nazotoki-submissions` | `POST /api/submissions`、`DELETE /api/admin/submissions`、`GET /api/admin/summary`、`GET /api/admin/teams/{teamId}/submissions` | `TABLE_SUBMISSIONS`, `TABLE_PROBLEMS`, `TABLE_TEAMS`, `JWT_SECRET` |
 
 共通ロジックは `backend/shared/` に集約:
 - `auth.ts`: JWT署名・検証、`requireAuth(event, role?)` ミドルウェア（`Authorization`検証、role不一致で403 throw）。
@@ -93,6 +93,11 @@
 - 論理削除（`active=false`）。回答記録は残す。
 
 **POST /api/admin/teams/{teamId}/regenerate-code** → res 200: `{ "team": Team }`（新 `loginCode`）
+
+**DELETE /api/admin/teams/{teamId}/purge**（完全削除）
+- チーム行と、そのチームの回答記録を**物理削除**する。res 200: `{ "ok": true, "deletedSubmissions": number }`。存在しないteamIdは404。
+- 論理削除（`DELETE /api/admin/teams/{teamId}`）はログインを止めるだけで集計には残り続けるため、「順位からも消したい」場合はこちらを使う。
+- 回答記録も一緒に消すのは、チーム行だけ消すと参照先を失った回答が残り、ランキングには出ないのに `submissionCount` だけ増えたままになるため。回答→チーム行の順に消す（逆順だと途中失敗で孤児レコードが残る）。
 
 ### 問題管理（admin）
 
@@ -147,11 +152,18 @@
 **POST /api/submissions**
 - req: `{ "code": string }`（4桁）
 - 処理: [回答マッチングロジック](#回答マッチングロジック) に従う。
-- res 200: `{ "isCorrect": boolean, "alreadyAnswered": boolean }`（**賞金額は返さない**）
+- res 200: `{ "isCorrect": boolean, "alreadyAnswered": boolean, "penalty": number | null }`
+  - `penalty`: **実際に減額された額（負の数）**。減額が発生しなかった回は `null`。
+    賞金額を参加者に見せない方針の**唯一の例外**で、マイナス賞金のパターンを踏んだときだけ金額を返す。いくら減ったかが分からないとトラップというゲーム上の仕掛けが機能せず、理不尽なだけになるため。**加算側の賞金は返さない**（合計賞金・達成状況は管理者だけが見る方針は維持）。
+    レコードを書いた回にのみ設定する。同じ番号の2回目以降は賞金が動いていないので `null` になる（再表示すると「また減らされた」と誤解させるため）。
   - `alreadyAnswered`: 同じ4桁を**そのチームが過去に送信済み**なら `true`。一度試した番号を打ち直したことに気づけるようにするためのフラグ。未登録コード（どの問題にも一致しない番号）も対象。他チームの回答状況は一切反映しない。
   - **`alreadyAnswered: true` のときはSubmissionレコードを作成しない**（同じ番号の記録は1チームにつき1件だけ）。賞金は重複加算防止により2回目以降どのみち0であり、同じ番号で履歴が埋まるのを防ぐため。判定結果（`isCorrect`）は通常どおり返す。この結果、`GET /admin/summary` の `submissionCount` は「試した番号の種類数」を表す。
 - res 403: **イベントが開始されていない/終了している場合**（`running: false`）`{ "error": "イベントはまだ開始されていません" }` または `{ "error": "イベントは終了しました" }`（記録もしない）。問題ごとの `enabled` より先に判定する。
 - res 400: 有効な問題が1件も無い場合 `{ "error": "現在受付中の問題はありません" }`（記録もしない）。
+
+**DELETE /api/admin/submissions**（全回答クリア）
+- 回答記録を**全件削除**する。res 200: `{ "ok": true, "deleted": number }`。チームと問題は削除しない。
+- 同じ問題・同じチームで本番をやり直すとき（リハーサル後の片付けなど）に使う。復元できないため、画面側では確認ダイアログを必須にしている。
 
 ### 集計（admin）
 

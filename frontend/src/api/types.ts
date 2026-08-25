@@ -53,11 +53,20 @@ export interface AdminLoginResponse {
   admin: AdminUser;
 }
 
-/** POST /submissions の応答。賞金額は返らない（参加者には正誤と回答済みかどうかのみ） */
+/**
+ * POST /submissions の応答。
+ * 賞金額は原則返らない（参加者には正誤と回答済みかどうかのみ）が、
+ * マイナス賞金を実際に踏んだときだけ例外的に減額分を返す。
+ */
 export interface SubmissionResult {
   isCorrect: boolean;
   /** 同じ4桁を自チームが過去に送信済みなら true（他チームの状況は反映しない） */
   alreadyAnswered: boolean;
+  /**
+   * 実際に減額された額（負の数）。減額が発生しなかった回は null。
+   * 同じ番号の2回目以降は賞金が動かないため null になる。
+   */
+  penalty?: number | null;
 }
 
 export interface RankingEntry {

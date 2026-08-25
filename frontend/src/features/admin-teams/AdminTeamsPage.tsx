@@ -28,6 +28,8 @@ export function AdminTeamsPage() {
 
   const [newTeamOpen, setNewTeamOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Team | null>(null);
+  // 完全削除は論理削除とは別の確認ダイアログにする。取り違えると復元できないため。
+  const [purgeTarget, setPurgeTarget] = useState<Team | null>(null);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: QUERY_KEY });
 
@@ -38,6 +40,16 @@ export function AdminTeamsPage() {
       setNewTeamOpen(false);
     },
   });
+  const purgeMutation = useMutation({
+    mutationFn: (teamId: string) => teamsApi.purge(teamId),
+    onSuccess: () => {
+      invalidate();
+      // 順位・総回答数も変わるのでダッシュボード側のキャッシュも捨てる
+      queryClient.invalidateQueries({ queryKey: ["admin", "summary"] });
+      setPurgeTarget(null);
+    },
+  });
+
   const removeMutation = useMutation({
     mutationFn: (teamId: string) => teamsApi.remove(teamId),
     onSuccess: () => {
@@ -90,6 +102,7 @@ export function AdminTeamsPage() {
       )}
       {isError && <ApiErrorAlert error={error} />}
       {removeMutation.isError && <Box sx={{ mb: 2 }}><ApiErrorAlert error={removeMutation.error} /></Box>}
+      {purgeMutation.isError && <Box sx={{ mb: 2 }}><ApiErrorAlert error={purgeMutation.error} /></Box>}
       {regenerateMutation.isError && <Box sx={{ mb: 2 }}><ApiErrorAlert error={regenerateMutation.error} /></Box>}
 
       {!isLoading && !isError && (
@@ -161,12 +174,20 @@ export function AdminTeamsPage() {
                       </Button>
                       <Button
                         size="small"
-                        color="error"
+                        color="inherit"
                         variant="outlined"
                         disabled={!team.active}
                         onClick={() => setDeleteTarget(team)}
                       >
-                        削除
+                        無効化
+                      </Button>
+                      <Button
+                        size="small"
+                        color="error"
+                        variant="outlined"
+                        onClick={() => setPurgeTarget(team)}
+                      >
+                        完全削除
                       </Button>
                     </Stack>
                   </TableCell>
@@ -187,17 +208,32 @@ export function AdminTeamsPage() {
 
       <ConfirmDialog
         open={deleteTarget !== null}
-        title="チームを削除しますか？"
+        title="チームを無効化しますか？"
         description={
           deleteTarget
-            ? `チーム「${deleteTarget.teamName}」を削除しますか？\n（このチームでのログインは無効になります。回答記録は集計上残ります）`
+            ? `チーム「${deleteTarget.teamName}」を無効化します。\n\nこのチームではログインできなくなりますが、回答記録と順位は残ります。\n順位からも消したい場合は「完全削除」を使ってください。`
             : undefined
         }
-        confirmLabel="削除する"
+        confirmLabel="無効化する"
         danger
         loading={removeMutation.isPending}
         onCancel={() => setDeleteTarget(null)}
         onConfirm={() => deleteTarget && removeMutation.mutate(deleteTarget.teamId)}
+      />
+
+      <ConfirmDialog
+        open={purgeTarget !== null}
+        title="チームを完全に削除しますか？"
+        description={
+          purgeTarget
+            ? `チーム「${purgeTarget.teamName}」と、そのチームの回答記録をすべて削除します。\n\nランキングからも消え、元に戻すことはできません。\n他のチームのデータと問題には影響しません。`
+            : undefined
+        }
+        confirmLabel="完全に削除する"
+        danger
+        loading={purgeMutation.isPending}
+        onCancel={() => setPurgeTarget(null)}
+        onConfirm={() => purgeTarget && purgeMutation.mutate(purgeTarget.teamId)}
       />
     </Box>
   );

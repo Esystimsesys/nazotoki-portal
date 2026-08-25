@@ -40,15 +40,17 @@ export function AnswerPage() {
 
   const [code, setCode] = useState("");
   const [shakeKey, setShakeKey] = useState(0);
-  const [result, setResult] = useState<{ isCorrect: boolean; alreadyAnswered: boolean } | null>(
-    null,
-  );
+  const [result, setResult] = useState<{
+    isCorrect: boolean;
+    alreadyAnswered: boolean;
+    penalty?: number | null;
+  } | null>(null);
   const [showOverlay, setShowOverlay] = useState(false);
 
   const submitMutation = useMutation({
     mutationFn: (value: string) => submissionsApi.submit(value),
     onSuccess: (res) => {
-      setResult({ isCorrect: res.isCorrect, alreadyAnswered: res.alreadyAnswered });
+      setResult({ isCorrect: res.isCorrect, alreadyAnswered: res.alreadyAnswered, penalty: res.penalty });
       setShowOverlay(true);
       setCode("");
       if (!res.isCorrect) setShakeKey((k) => k + 1);
@@ -204,6 +206,7 @@ export function AnswerPage() {
         open={showOverlay && result !== null}
         isCorrect={result?.isCorrect ?? false}
         alreadyAnswered={result?.alreadyAnswered ?? false}
+        penalty={result?.penalty}
         onClose={() => setShowOverlay(false)}
       />
     </Box>

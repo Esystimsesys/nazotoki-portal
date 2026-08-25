@@ -6,6 +6,8 @@ export const submissionsApi = {
   submit: (code: string) => apiClient.post<SubmissionResult>("/submissions", { code }, "team"),
   /** GET /api/admin/summary */
   summary: () => apiClient.get<SummaryResponse>("/admin/summary", "admin"),
+  /** DELETE /api/admin/submissions（全回答記録を削除。チーム・問題は残る） */
+  clearAll: () => apiClient.delete<{ ok: true; deleted: number }>("/admin/submissions", "admin"),
   /** GET /api/admin/teams/{teamId}/submissions */
   teamSubmissions: (teamId: string) =>
     apiClient.get<TeamSubmissionsResponse>(`/admin/teams/${teamId}/submissions`, "admin"),

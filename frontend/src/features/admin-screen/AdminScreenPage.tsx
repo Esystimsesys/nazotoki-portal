@@ -145,28 +145,6 @@ export function AdminScreenPage() {
 
       {data && (
         <Box sx={{ position: "relative", zIndex: 1 }}>
-          <Box
-            sx={{
-              display: "grid",
-              gridTemplateColumns: { xs: "1fr 1fr", sm: "repeat(3, 1fr)" },
-              gap: isFullscreen ? 2.5 : 1.75,
-              mb: isFullscreen ? 4 : 2.5,
-            }}
-          >
-            {[
-              { label: "参加チーム数", value: String(data.stats.teamCount) },
-              { label: "総回答数", value: String(data.stats.submissionCount) },
-              { label: "最高賞金額", value: formatPrize(data.stats.maxPrize).replace("+", "") },
-            ].map((s) => (
-              <NeonPanel key={s.label} sx={{ p: isFullscreen ? "22px 24px" : "16px 18px" }}>
-                <Typography sx={{ fontSize: isFullscreen ? 15 : 11.5, color: "text.secondary", letterSpacing: 0.5, mb: 0.75 }}>
-                  {s.label}
-                </Typography>
-                <Typography sx={{ fontSize: isFullscreen ? 34 : 22, fontWeight: 900, color: "#ffe08a" }}>{s.value}</Typography>
-              </NeonPanel>
-            ))}
-          </Box>
-
           <Typography sx={{ fontSize: isFullscreen ? 22 : 14, fontWeight: 800, mb: isFullscreen ? 1.5 : 1 }}>
             賞金ランキング
           </Typography>

@@ -10,10 +10,11 @@ import TableContainer from "@mui/material/TableContainer";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
 import Typography from "@mui/material/Typography";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { submissionsApi } from "../../api/submissions";
 import { ApiErrorAlert } from "../../shared/components/ApiErrorAlert";
 import { BarChart } from "../../shared/components/charts";
+import { ConfirmDialog } from "../../shared/components/ConfirmDialog";
 import { NeonPanel } from "../../shared/components/NeonPanel";
 import { formatPrize, prizeColor } from "../../shared/format";
 import { downloadCsv, problemStatsToCsv, rankingToCsv, timestampedFilename } from "../../shared/csv";
@@ -45,6 +46,16 @@ export function AdminDashboardPage() {
   });
 
   const [selectedTeam, setSelectedTeam] = useState<{ teamId: string; teamName: string } | null>(null);
+  const [clearOpen, setClearOpen] = useState(false);
+
+  const queryClient = useQueryClient();
+  const clearMutation = useMutation({
+    mutationFn: () => submissionsApi.clearAll(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "summary"] });
+      setClearOpen(false);
+    },
+  });
 
   return (
     <Box>
@@ -78,6 +89,16 @@ export function AdminDashboardPage() {
             }
           >
             ⬇ 問題別CSV
+          </Button>
+          {/* 消す前にCSVで結果を残せるよう、出力ボタンの隣に置く */}
+          <Button
+            size="small"
+            color="error"
+            variant="outlined"
+            disabled={!data || data.stats.submissionCount === 0 || clearMutation.isPending}
+            onClick={() => setClearOpen(true)}
+          >
+            🗑 全回答をクリア
           </Button>
         </Box>
       </Box>
@@ -228,6 +249,27 @@ export function AdminDashboardPage() {
             </Table>
           </TableContainer>
         </>
+      )}
+
+      <ConfirmDialog
+        open={clearOpen}
+        title="すべての回答記録を削除しますか？"
+        description={
+          data
+            ? `${data.stats.submissionCount}件の回答記録をすべて削除します。\n\n順位と賞金はすべて0に戻り、元に戻すことはできません。\nチームと問題は削除されません。\n\n結果を残す場合は、先に「順位CSV」「問題別CSV」を出力してください。`
+            : undefined
+        }
+        confirmLabel="すべて削除する"
+        danger
+        loading={clearMutation.isPending}
+        onCancel={() => setClearOpen(false)}
+        onConfirm={() => clearMutation.mutate()}
+      />
+
+      {clearMutation.isError && (
+        <Box sx={{ mt: 2 }}>
+          <ApiErrorAlert error={clearMutation.error} />
+        </Box>
       )}
 
       <TeamHistoryModal

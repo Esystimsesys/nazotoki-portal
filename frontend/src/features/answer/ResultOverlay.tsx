@@ -2,9 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Typography from "@mui/material/Typography";
+import { formatPrize } from "../../shared/format";
 
 const CONFETTI_COLORS = ["#f4c542", "#ff2e9a", "#a855f7", "#39ff88", "#ffe08a"];
 const AUTO_CLOSE_MS = 2200;
+/** 減額を表示するときは金額を読む時間が要るので長めにする */
+const PENALTY_CLOSE_MS = 3800;
 
 interface ConfettiPiece {
   id: number;
@@ -29,11 +32,16 @@ interface ResultOverlayProps {
   isCorrect: boolean;
   /** 同じ4桁を自チームが過去に送信済みか */
   alreadyAnswered: boolean;
+  /** 実際に減額された額（負の数）。減額が無ければ null */
+  penalty?: number | null;
   onClose: () => void;
 }
 
 /** 正解/不正解の演出オーバーレイ */
-export function ResultOverlay({ open, isCorrect, alreadyAnswered, onClose }: ResultOverlayProps) {
+export function ResultOverlay({ open, isCorrect, alreadyAnswered, penalty, onClose }: ResultOverlayProps) {
+  // 賞金額は参加者に見せない方針だが、減額だけは例外。いくら減ったか分からないと
+  // トラップという仕掛けが機能せず、ただ理不尽なだけになるため。
+  const hasPenalty = typeof penalty === "number" && penalty < 0;
   const [confetti, setConfetti] = useState<ConfettiPiece[]>([]);
 
   useEffect(() => {
@@ -43,10 +51,11 @@ export function ResultOverlay({ open, isCorrect, alreadyAnswered, onClose }: Res
     if (isCorrect && !alreadyAnswered) setConfetti(buildConfetti());
     else setConfetti([]);
 
-    const timer = window.setTimeout(onClose, AUTO_CLOSE_MS);
+    // 金額を読む時間が要るため、減額が出るときだけ表示時間を延ばす
+    const timer = window.setTimeout(onClose, hasPenalty ? PENALTY_CLOSE_MS : AUTO_CLOSE_MS);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, isCorrect, alreadyAnswered]);
+  }, [open, isCorrect, alreadyAnswered, hasPenalty]);
 
   const cardColors = useMemo(
     () =>
@@ -113,6 +122,39 @@ export function ResultOverlay({ open, isCorrect, alreadyAnswered, onClose }: Res
         >
           {isCorrect ? "正解！" : "不正解…"}
         </Typography>
+
+        {hasPenalty && (
+          <Box
+            sx={{
+              mt: 1.5,
+              mb: 0.5,
+              px: 1.5,
+              py: 1.25,
+              borderRadius: "12px",
+              background: "rgba(255,75,110,0.12)",
+              border: "1px solid rgba(255,75,110,0.45)",
+            }}
+          >
+            <Typography sx={{ fontSize: 11, color: "text.secondary", letterSpacing: 0.5, mb: 0.25 }}>
+              賞金が減りました
+            </Typography>
+            <Typography
+              className="mono"
+              sx={{
+                // 億単位の桁数でも1行に収まる大きさにする（折り返すと符号だけが
+                // 前の行に残って読みにくくなるため nowrap で必ず1行に）
+                fontSize: 19,
+                fontWeight: 900,
+                whiteSpace: "nowrap",
+                color: "#ff4b6e",
+                textShadow: "0 0 16px rgba(255,75,110,0.45)",
+                lineHeight: 1.25,
+              }}
+            >
+              {formatPrize(penalty as number)}
+            </Typography>
+          </Box>
+        )}
 
         {alreadyAnswered && (
           <Box

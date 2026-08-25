@@ -3,8 +3,9 @@
  * - POST /api/submissions                        回答受付・判定（team）
  * - GET  /api/admin/summary                       集計（ランキング・問題別正誤・全体統計）（admin）
  * - GET  /api/admin/teams/{teamId}/submissions     チーム別回答履歴（admin）
+ * - DELETE /api/admin/submissions                  全回答記録の削除（admin）
  */
-import { GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { BatchWriteCommand, GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
 import { requireAuth } from "../../shared/auth";
 import {
@@ -178,6 +179,11 @@ async function submitCode(event: ApiEvent, teamId: string): Promise<ApiResult> {
 
   const result = matchSubmission(code, enabledProblems, patterns, existingSubmissions);
 
+  // 実際に減額された額（マイナス賞金のパターンを踏んだときだけ入る）。
+  // レコードを書いたときにだけ設定する。書かなかった回（同じ番号の2回目以降）は
+  // 賞金が動いていないので、金額を出すと「また減らされた」と誤解させるため。
+  let penalty: number | null = null;
+
   // 同じ番号の2回目以降はレコードを作らない。
   // 賞金は重複加算防止により2回目以降どのみち0で、記録しても履歴が同じ番号で
   // 埋まって管理画面が見づらくなるだけのため。判定結果は通常どおり返す。
@@ -198,10 +204,14 @@ async function submitCode(event: ApiEvent, teamId: string): Promise<ApiResult> {
       submittedAt,
     };
     await ddb().send(new PutCommand({ TableName: requiredEnv("TABLE_SUBMISSIONS"), Item: item }));
+    if (result.prizeAwarded < 0) penalty = result.prizeAwarded;
   }
 
-  // 参加者に返すのは正誤と「その番号を既に送信済みか」だけ（賞金額は返さない）
-  return ok({ isCorrect: result.isCorrect, alreadyAnswered });
+  // 参加者に返すのは正誤と「その番号を既に送信済みか」、そして減額された場合のみ その額。
+  // 賞金額を見せない方針の例外として、マイナス賞金だけは金額を返す。減点は
+  // 「いくら減ったか」が分からないと理不尽に感じられ、トラップというゲーム上の
+  // 仕掛けが機能しないため。加点側は伏せたまま（合計賞金・達成状況は管理者だけが見る）。
+  return ok({ isCorrect: result.isCorrect, alreadyAnswered, penalty });
 }
 
 /**
@@ -385,6 +395,32 @@ async function teamSubmissions(teamId: string): Promise<ApiResult> {
   });
 }
 
+/**
+ * DELETE /api/admin/submissions（全回答記録の削除）
+ *
+ * チームと問題は残したまま、回答記録だけを空にする。
+ * 同じ問題・同じチームで本番をやり直すとき（リハーサル後の片付けなど）に使う。
+ * 消すと復元できないので、画面側では確認ダイアログを必須にしている。
+ */
+async function clearSubmissions(): Promise<ApiResult> {
+  const items = await scanAll(requiredEnv("TABLE_SUBMISSIONS"));
+
+  // BatchWriteItem は1回25件まで
+  for (let i = 0; i < items.length; i += 25) {
+    await ddb().send(
+      new BatchWriteCommand({
+        RequestItems: {
+          [requiredEnv("TABLE_SUBMISSIONS")]: items
+            .slice(i, i + 25)
+            .map((item) => ({ DeleteRequest: { Key: { pk: item.pk, sk: item.sk } } })),
+        },
+      }),
+    );
+  }
+
+  return ok({ ok: true, deleted: items.length });
+}
+
 export const handler = async (event: ApiEvent): Promise<ApiResult> =>
   withErrorHandling(async () => {
     const method = event.requestContext.http.method;
@@ -396,6 +432,11 @@ export const handler = async (event: ApiEvent): Promise<ApiResult> =>
       const auth = requireAuth(event, "team");
       if (!auth.teamId) return err(401, "認証が無効です");
       return submitCode(event, auth.teamId);
+    }
+
+    if (method === "DELETE" && path === "/api/admin/submissions") {
+      requireAuth(event, "admin");
+      return clearSubmissions();
     }
 
     if (method === "GET" && path === "/api/admin/summary") {
