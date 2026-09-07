@@ -38,6 +38,16 @@ Parameters:
     Type: String
     Default: nazotoki-portal
     Description: GitHub repository name.
+  GitHubOwnerId:
+    Type: String
+    Default: "47743231"
+    AllowedPattern: "[0-9]+"
+    Description: Immutable GitHub owner ID (verify with the GitHub repository API).
+  GitHubRepoId:
+    Type: String
+    Default: "1335049150"
+    AllowedPattern: "[0-9]+"
+    Description: Immutable GitHub repository ID (verify with the GitHub repository API).
   GitHubBranch:
     Type: String
     Default: main
@@ -45,8 +55,8 @@ Parameters:
       Branch allowed to assume the deploy role. The trust policy pins the OIDC
       subject to this branch, so a workflow running on any other ref (or from
       a fork's pull request) cannot obtain deploy credentials. The owner and
-      repository names carry a trailing wildcard because GitHub appends
-      numeric org/repo ids to the subject in this organization.
+      repository names must match exactly; both default and immutable subject
+      formats are supported.
 
 Resources:
   # ---------------------------------------------------------------------
@@ -74,13 +84,13 @@ Resources:
                 # Guards against the "confused deputy" case where some other
                 # GitHub workflow presents a token to this role.
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-              StringLike:
-                # GitHub が送る sub は、この組織では ID 付きの形になる:
-                #   repo:Owner@<orgId>/Repo@<repoId>:ref:refs/heads/main
-                # 名前だけで一致させようとすると必ず外れるため、
-                # 所有者名とリポジトリ名の直後にワイルドカードを置いて ID 部分を吸収する。
-                # ブランチは refs/heads/<branch> で厳密に固定したまま（fork の PR は通さない）。
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOwner}*/${GitHubRepo}*:ref:refs/heads/${GitHubBranch}
+                # GitHub reports use_immutable_subject=false (2026-09-07), while
+                # earlier deployment notes describe the ID-bearing format. Allow
+                # both exact subjects; never wildcard owner/repository names.
+                # https://docs.github.com/en/actions/reference/security/oidc
+                token.actions.githubusercontent.com:sub:
+                  - !Sub repo:${GitHubOwner}/${GitHubRepo}:ref:refs/heads/${GitHubBranch}
+                  - !Sub repo:${GitHubOwner}@${GitHubOwnerId}/${GitHubRepo}@${GitHubRepoId}:ref:refs/heads/${GitHubBranch}
       ManagedPolicyArns:
         # AdministratorAccess, same as the CodeBuild backend role it replaces.
         # The deploy creates/updates IAM roles, Lambda, API Gateway, DynamoDB

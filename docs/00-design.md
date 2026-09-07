@@ -98,7 +98,7 @@ flowchart LR
 | 属性 | 説明 |
 | --- | --- |
 | PK | `TEAM#<teamId>` |
-| SK | `SUBMISSION#<submittedAt>#<submissionId>` |
+| SK | `SUBMISSION#CODE#<code>` |
 | code | 参加者が入力した4桁 |
 | problemId | 一致した問題ID（未一致の場合は`null`） |
 | patternId | 一致した回答パターンID（未一致の場合は`null`） |

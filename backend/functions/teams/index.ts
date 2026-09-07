@@ -8,7 +8,6 @@
  * - POST   /api/admin/teams/{teamId}/regenerate-code ログインコード再発行（admin）
  */
 import {
-  BatchWriteCommand,
   DeleteCommand,
   GetCommand,
   PutCommand,
@@ -18,6 +17,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { requireAuth, signToken } from "../../shared/auth";
 import { ddb, queryAll, requiredEnv, scanAll } from "../../shared/dynamo";
+import { batchWrite } from "../../shared/batch-write";
 import {
   err,
   getJsonBody,
@@ -191,18 +191,10 @@ async function purgeTeam(teamId: string): Promise<ApiResult> {
     ProjectionExpression: "pk, sk",
   });
 
-  // BatchWriteItem は1回25件まで
-  for (let i = 0; i < submissions.length; i += 25) {
-    await ddb().send(
-      new BatchWriteCommand({
-        RequestItems: {
-          [requiredEnv("TABLE_SUBMISSIONS")]: submissions
-            .slice(i, i + 25)
-            .map((item) => ({ DeleteRequest: { Key: { pk: item.pk, sk: item.sk } } })),
-        },
-      }),
-    );
-  }
+  await batchWrite(
+    requiredEnv("TABLE_SUBMISSIONS"),
+    submissions.map((item) => ({ DeleteRequest: { Key: { pk: item.pk, sk: item.sk } } })),
+  );
 
   // 回答を消してからチーム行を消す。逆順だと途中で失敗したときに
   // 参照先を失った回答だけが残る（総回答数がずれた状態になる）。

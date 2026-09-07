@@ -7,7 +7,7 @@
  * - GET  /api/admin/timeline                       賞金推移の時系列（admin）
  * - GET  /api/admin/analysis                       問題の到達状況とトラップの発動状況（admin）
  */
-import { BatchWriteCommand, GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
 import { requireAuth } from "../../shared/auth";
 import {
@@ -17,7 +17,8 @@ import {
   type PatternRecord,
   type ProblemRecord,
 } from "../../shared/answer-matching";
-import { ddb, requiredEnv, scanAll } from "../../shared/dynamo";
+import { ddb, queryAll, requiredEnv, scanAll } from "../../shared/dynamo";
+import { batchWrite } from "../../shared/batch-write";
 import { getEventState } from "../../shared/event-state";
 import {
   err,
@@ -31,7 +32,9 @@ import {
 
 interface SubmissionItem {
   pk: string; // TEAM#<teamId>
-  sk: string; // SUBMISSION#<submittedAt>#<submissionId>
+  // 現行形式は SUBMISSION#CODE#<code>（コードごとの重複を条件付きPutで防止）。
+  // 旧形式 SUBMISSION#<submittedAt>#<submissionId> も読み取り互換のため許容する。
+  sk: string;
   submissionId: string;
   teamId: string;
   code: string;
@@ -118,14 +121,14 @@ async function loadAllProblemsWithPatterns(): Promise<{
 }
 
 async function queryTeamSubmissions(teamId: string): Promise<SubmissionItem[]> {
-  const items = await ddb().send(
-    new QueryCommand({
-      TableName: requiredEnv("TABLE_SUBMISSIONS"),
-      KeyConditionExpression: "pk = :pk",
-      ExpressionAttributeValues: { ":pk": `TEAM#${teamId}` },
-    }),
-  );
-  return (items.Items ?? []) as unknown as SubmissionItem[];
+  const items = await queryAll({
+    TableName: requiredEnv("TABLE_SUBMISSIONS"),
+    KeyConditionExpression: "pk = :pk",
+    ExpressionAttributeValues: { ":pk": `TEAM#${teamId}` },
+    // 旧形式も含め、直前の書き込みを重複判定に反映する。
+    ConsistentRead: true,
+  });
+  return items as unknown as SubmissionItem[];
 }
 
 /** POST /api/submissions（team） */
@@ -195,7 +198,9 @@ async function submitCode(event: ApiEvent, teamId: string): Promise<ApiResult> {
     const submittedAt = new Date().toISOString();
     const item: SubmissionItem = {
       pk: `TEAM#${teamId}`,
-      sk: `SUBMISSION#${submittedAt}#${submissionId}`,
+      // 回答済み判定と書き込みを同じキーに寄せ、複数端末から同時に送信されても
+      // DynamoDBの条件付きPutで1件だけを受理する。旧形式の履歴は上のQueryで検出する。
+      sk: `SUBMISSION#CODE#${code}`,
       submissionId,
       teamId,
       code,
@@ -205,7 +210,19 @@ async function submitCode(event: ApiEvent, teamId: string): Promise<ApiResult> {
       prizeAwarded: result.prizeAwarded,
       submittedAt,
     };
-    await ddb().send(new PutCommand({ TableName: requiredEnv("TABLE_SUBMISSIONS"), Item: item }));
+    try {
+      await ddb().send(
+        new PutCommand({
+          TableName: requiredEnv("TABLE_SUBMISSIONS"),
+          Item: item,
+          ConditionExpression: "attribute_not_exists(pk)",
+        }),
+      );
+    } catch (error) {
+      // 同じコードを別端末が先に登録した場合。競合側も通常の再回答と同じ契約で返す。
+      if ((error as { name?: string }).name !== "ConditionalCheckFailedException") throw error;
+      return ok({ isCorrect: result.isCorrect, alreadyAnswered: true, penalty: null });
+    }
     if (result.prizeAwarded < 0) penalty = result.prizeAwarded;
   }
 
@@ -556,18 +573,10 @@ async function teamSubmissions(teamId: string): Promise<ApiResult> {
 async function clearSubmissions(): Promise<ApiResult> {
   const items = await scanAll(requiredEnv("TABLE_SUBMISSIONS"));
 
-  // BatchWriteItem は1回25件まで
-  for (let i = 0; i < items.length; i += 25) {
-    await ddb().send(
-      new BatchWriteCommand({
-        RequestItems: {
-          [requiredEnv("TABLE_SUBMISSIONS")]: items
-            .slice(i, i + 25)
-            .map((item) => ({ DeleteRequest: { Key: { pk: item.pk, sk: item.sk } } })),
-        },
-      }),
-    );
-  }
+  await batchWrite(
+    requiredEnv("TABLE_SUBMISSIONS"),
+    items.map((item) => ({ DeleteRequest: { Key: { pk: item.pk, sk: item.sk } } })),
+  );
 
   return ok({ ok: true, deleted: items.length });
 }

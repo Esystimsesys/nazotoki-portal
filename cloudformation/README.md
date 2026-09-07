@@ -13,8 +13,9 @@ cloudformation/
 ├── delete.sh                   # 逆順に rain rm（フロントエンドS3バケットは事前に空にする）
 ├── scripts/
 │   ├── build-backend.sh        # !Rain::S3 の Run から呼ばれるLambdaビルドスクリプト
+│   ├── test-oidc.py             # OIDC信頼条件の回帰テスト（PyYAMLが必要）
 │   └── lint.sh                 # cfn-lint（rain独自タグをダミー値に置換してから実行）
-├── buildspec-backend.yaml      # CodeBuild: backendのtypecheck/test → deploy.sh
+├── buildspec-backend.yaml      # 旧CodeBuild用（現行Actionsは使用しない）
 ├── buildspec-frontend.yaml     # CodeBuild: viteビルド → S3 sync → invalidation
 └── templates/apne1/
     ├── nazotoki-cfn-dynamodb.yaml    # 4テーブル（Teams/Problems/Submissions/Admins）、全てPAY_PER_REQUEST
@@ -135,82 +136,55 @@ DynamoDBの `Query` をGSIに対して実行するにはテーブルARN自体だ
 
 現時点で全テンプレートがエラー・警告ともに0件でパスすることを確認済み（本リポジトリの検証環境: cfn-lint 1.46.0）。
 
-## CI/CD（CodeCommit + CodeBuild + CodePipeline）
+## CI/CD（GitHub Actions + OIDC）
 
-`nazotoki-cfn-code` スタックが、ソースリポジトリ・ビルドプロジェクト2つ・3ステージのパイプラインを構成する。
+`.github/workflows/deploy.yml` が main へのpushまたは手動実行で動く。
+バックエンドの型チェック・テスト → アプリのスタック更新 → フロントのビルド・S3配置・CloudFront無効化の順で実行する。
+AWS認証はGitHub OIDCで、長期アクセスキーを保持しない。
 
-| リソース | 名前 |
-| --- | --- |
-| CodeCommitリポジトリ | `nazotoki-portal` |
-| CodeBuild（バックエンド） | `nazotoki-build-backend` |
-| CodeBuild（フロントエンド） | `nazotoki-build-frontend` |
-| CodePipeline | `nazotoki-pipeline` |
-| アーティファクト置き場 | `nazotoki-pipeline-artifacts-<AccountId>`（30日で失効） |
+### デプロイ用ロールの信頼条件
 
-パイプラインは3ステージ:
-
-1. **Source** — `main` ブランチへのpushをEventBridgeルール（`nazotoki-pipeline-trigger`）が検知して起動する（`PollForSourceChanges: false`）。
-2. **BackendDeploy** — `buildspec-backend.yaml`。`npm ci` → `npm run typecheck` → `npm test` を実行し、**テストが落ちればここでパイプラインが止まる**。通過後に `deploy.sh`（rain）で3つのアプリスタックをデプロイし、後続ステージ用にOutputsをJSONで出力する。
-3. **FrontendBuildDeploy** — `buildspec-frontend.yaml`。前ステージのOutputsからバケット名とディストリビューションIDを解決し、`vite build` → `aws s3 sync --delete` → CloudFrontのinvalidationを実行する。
-
-### このスタックを `templates.conf` に入れていない理由
-
-パイプラインのBackendDeployステージは `deploy.sh` を実行する。もしCI/CDスタックが `templates.conf` に含まれていると、**パイプラインが自分自身を更新しようとして実行中のパイプラインをsupersede（中断）してしまう**。そのため、このスタックだけは `templates.conf` から外し、ワークステーションから明示的にデプロイする:
+`nazotoki-cfn-code.yaml` はデプロイ用IAMロールを管理する。このスタックは
+`templates.conf` に含めず、ワークステーションから個別に反映する。
+**アプリの通常デプロイだけでは信頼条件の修正は反映されない。**
 
 ```bash
 rain deploy -r ap-northeast-1 templates/apne1/nazotoki-cfn-code.yaml nazotoki-cfn-code
 ```
 
-（ekiden-portalは `DEPLOY_SKIP` 環境変数でこれを回避しているが、本プロジェクトでは「そもそもリストに入れない」ことで構造的に回避している。）
+信頼条件は `StringEquals` で所有者・リポジトリ・mainブランチを完全一致させる。
+名前末尾のワイルドカードは、別所有者や別リポジトリも許可するため使用しない。
+2026-09-07にGitHub APIから確認したIDは owner `47743231`、repository `1335049150`。
+同日の設定APIは `use_immutable_subject=false` を返す一方、過去の記録はID付き形式のため、
+以下の2形式をそれぞれ完全一致で許可する。
 
-### JWT_SECRET の扱い（重要）
+- `repo:Esystimsesys/nazotoki-portal:ref:refs/heads/main`
+- `repo:Esystimsesys@47743231/nazotoki-portal@1335049150:ref:refs/heads/main`
 
-`deploy.sh` は `JWT_SECRET` が未設定だと毎回ランダム生成する。パイプラインでこれが起きると**実行のたびに全JWTが無効化**されてしまうため、CI/CDでは **SSM Parameter Store の SecureString から供給**する。
+名前変更・移管・リポジトリ再作成時は、名前とIDを確認してパラメータを更新する。
+反映後はmainのActionsで認証を確認する。旧版Lambdaと新版Lambdaが混在した状態で
+イベント回答を受け付けないよう、回答受付を停止した状態でバックエンドを更新する。
 
-```bash
-# 初回のみ（値はローカルの cloudformation/.env.local と一致させる）
-aws ssm put-parameter --name /nazotoki/jwt-secret --type SecureString \
-  --value "$JWT_SECRET" --overwrite --region ap-northeast-1
-```
+参照: [GitHub OIDC仕様](https://docs.github.com/en/actions/reference/security/oidc)、
+[AWS条件演算子](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_condition_operators.html)。
 
-`buildspec-backend.yaml` の `env.parameter-store` がこのパラメータを `JWT_SECRET` として読み込むため、パイプライン経由のデプロイでは値が固定される。**このパラメータが無いとBackendDeployステージが失敗する**ので、CI/CDスタックの初回デプロイ前に必ず登録すること。
+### JWT_SECRET
 
-### 初回セットアップ手順
-
-```bash
-# 1. CI/CDスタックをデプロイ（CodeCommitリポジトリが作られる）
-rain deploy -r ap-northeast-1 templates/apne1/nazotoki-cfn-code.yaml nazotoki-cfn-code
-
-# 2. JWT_SECRETをSSMに登録（上記参照）
-
-# 3. リポジトリをリモートに追加してpush（pushでパイプラインが自動起動）
-cd <repo-root>
-# macOSでは osxkeychain がシステム全体のgitconfigに設定されており、リポジトリ設定より
-# 先に評価される。CodeCommitの認証情報は時限付きのSigV4署名のため、一度成功した後に
-# keychainへキャッシュされた古い値が返り、以降のpushが403になる（実際に発生した）。
-# 空文字を1つ挟んで継承したhelperリストをリセットしてから、AWSのhelperだけを使う。
-git config --add credential.helper ""
-git config --add credential.helper '!aws codecommit credential-helper $@'
-git config credential.UseHttpPath true
-git remote add origin https://git-codecommit.ap-northeast-1.amazonaws.com/v1/repos/nazotoki-portal
-git push -u origin main
-```
-
-**push が 403 になったら**: 上記のhelper設定を確認したうえで、keychainに残った
-古い資格情報を消す。
-
-```bash
-printf "protocol=https\nhost=git-codecommit.ap-northeast-1.amazonaws.com\n\n" \
-  | git credential-osxkeychain erase
-```
+Actionsは `/nazotoki/jwt-secret` のSSM SecureStringを復号して読み込み、
+`JWT_SECRET` 環境変数として `deploy.sh` に渡す。値は再デプロイ間で固定する。
+未設定で手元から `deploy.sh` を実行すると新しい値が生成され、既存JWTが無効になる。
 
 ### 状態確認
 
 ```bash
-aws codepipeline get-pipeline-state --name nazotoki-pipeline --region ap-northeast-1 \
-  --query "stageStates[].{stage:stageName,status:latestExecution.status}" --output table
+gh run list --repo Esystimsesys/nazotoki-portal --workflow deploy.yml
 ```
 
 ### IAM権限の方針
 
-バックエンド用CodeBuildロールは **AdministratorAccess** を付与している。このプロジェクトはIAMロール・Lambda・API Gateway・CloudFrontを含む全スタックを作成/更新するため、権限を絞ると結局テンプレート全体を写した権限リストを保守することになる。単一アカウントの社内イベント用システムという前提で許容している。フロントエンド用ロールは対象バケット・ディストリビューション・`describe-stacks` のみに絞った最小権限。
+GitHub Actionsのデプロイロールには **AdministratorAccess** を付与している。
+IAM・Lambda・API Gateway・DynamoDB・CloudFrontを含むスタックを更新するため、
+単一アカウントの社内イベント用システムという前提で許容している既存方針を維持する。
+Lambda実行ロールは関数ごとに必要なテーブルへの権限に限定する。
+
+OIDC条件の回帰テスト: `python3 scripts/test-oidc.py`（cloudformationディレクトリから実行）。

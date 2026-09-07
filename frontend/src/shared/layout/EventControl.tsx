@@ -5,6 +5,7 @@ import Typography from "@mui/material/Typography";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { eventApi } from "../../api/event";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { ApiErrorAlert } from "../components/ApiErrorAlert";
 import { formatTime } from "../format";
 import { neon } from "../../app/theme";
 
@@ -28,11 +29,12 @@ export function EventControl() {
   const [lastConfirmTarget, setLastConfirmTarget] = useState(false);
 
   const openConfirm = (running: boolean) => {
+    mutation.reset();
     setLastConfirmTarget(running);
     setConfirmTarget(running);
   };
 
-  const { data } = useQuery({
+  const { data, isError, error } = useQuery({
     queryKey: EVENT_QUERY_KEY,
     queryFn: () => eventApi.get("admin"),
     // 管理者が複数人いる場合に、別の人が開始/終了した結果が手元にも反映されるようにする
@@ -50,16 +52,20 @@ export function EventControl() {
     },
   });
 
-  const state = data?.event;
+  // 初期取得前や取得失敗時に running=false と解釈すると、実際の状態を知らないまま
+  // 開始・再開操作を許してしまう。状態が確定したときだけ操作可能にする。
+  const stateKnown = data !== undefined && !isError;
+  const state = stateKnown ? data.event : undefined;
   const running = state?.running ?? false;
   // 未開始と終了後は同じ running=false だが、運用上まったく違う状態なので区別して出す
   const finished = !running && state?.endedAt != null;
 
-  const statusLabel = running ? "開催中" : finished ? "終了" : "開始前";
-  const statusColor = running ? neon.success : finished ? neon.inkDim : neon.gold;
+  const statusLabel = !stateKnown ? "状態不明" : running ? "開催中" : finished ? "終了" : "開始前";
+  const statusColor = !stateKnown ? neon.inkDim : running ? neon.success : finished ? neon.inkDim : neon.gold;
 
   return (
-    <>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1, maxWidth: 360 }}>
+      {isError && <ApiErrorAlert error={error} />}
       <Box sx={{ display: "flex", alignItems: "center", gap: 1.25 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
           <Box
@@ -89,9 +95,9 @@ export function EventControl() {
         </Box>
         <Button
           size="small"
-          variant={running ? "outlined" : "contained"}
-          color={running ? "inherit" : "primary"}
-          disabled={mutation.isPending}
+          variant={stateKnown && running ? "outlined" : "contained"}
+          color={stateKnown && running ? "inherit" : "primary"}
+          disabled={!stateKnown || mutation.isPending}
           onClick={() => openConfirm(!running)}
           sx={
             running
@@ -103,7 +109,7 @@ export function EventControl() {
                 }
           }
         >
-          {running ? "■ 終了" : finished ? "▶ 再開" : "▶ 開始"}
+          {!stateKnown ? "状態不明" : running ? "■ 終了" : finished ? "▶ 再開" : "▶ 開始"}
         </Button>
       </Box>
 
@@ -118,9 +124,13 @@ export function EventControl() {
         confirmLabel={lastConfirmTarget ? "開始する" : "終了する"}
         danger={!lastConfirmTarget}
         loading={mutation.isPending}
+        confirmDisabled={!stateKnown}
         onCancel={() => setConfirmTarget(null)}
-        onConfirm={() => confirmTarget !== null && mutation.mutate(confirmTarget)}
-      />
-    </>
+        onConfirm={() => stateKnown && confirmTarget !== null && mutation.mutate(confirmTarget)}
+      >
+        {isError && <Box sx={{ mt: 2 }}><ApiErrorAlert error={error} /></Box>}
+        {mutation.isError && <Box sx={{ mt: 2 }}><ApiErrorAlert error={mutation.error} /></Box>}
+      </ConfirmDialog>
+    </Box>
   );
 }

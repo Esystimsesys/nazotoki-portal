@@ -13,7 +13,7 @@
  * Problemsテーブルは「問題メタ行(sk=META)＋パターン行(sk=PATTERN#<patternId>)」の単一テーブル構成。
  * データ量が小さいためScanで全件取得する。
  */
-import { BatchWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
 import Papa from "papaparse";
 import { requireAuth } from "../../shared/auth";
@@ -24,6 +24,7 @@ import {
   type ProblemCodeSet,
 } from "../../shared/answer-matching";
 import { ddb, requiredEnv, scanAll } from "../../shared/dynamo";
+import { batchWrite, type BatchWriteRequest } from "../../shared/batch-write";
 import { getEventState, setEventRunning } from "../../shared/event-state";
 import { AUTO_CODE_KEYWORDS, generateUnusedCode } from "../../shared/random-code";
 import {
@@ -57,19 +58,6 @@ interface PatternInput {
   isCorrect: boolean;
   prize: number;
   note?: string;
-}
-
-type WriteRequestItem =
-  | { PutRequest: { Item: Record<string, unknown> } }
-  | { DeleteRequest: { Key: Record<string, unknown> } };
-
-/** DynamoDB BatchWrite（25件ずつ分割） */
-async function batchWrite(tableName: string, requests: WriteRequestItem[]): Promise<void> {
-  for (let i = 0; i < requests.length; i += 25) {
-    await ddb().send(
-      new BatchWriteCommand({ RequestItems: { [tableName]: requests.slice(i, i + 25) } }),
-    );
-  }
 }
 
 /** Problemsテーブルを全件Scanし、META行＋PATTERN行からProblem[]を組み立てる */
@@ -155,7 +143,7 @@ function buildPatternItems(patternsInput: PatternInput[]): Pattern[] {
   }));
 }
 
-function patternWriteRequests(problemId: string, patterns: Pattern[]): WriteRequestItem[] {
+function patternWriteRequests(problemId: string, patterns: Pattern[]): BatchWriteRequest[] {
   return patterns.map((p) => ({
     PutRequest: {
       Item: {
@@ -263,7 +251,7 @@ async function updateProblem(event: ApiEvent, problemId: string): Promise<ApiRes
   }
 
   const patterns = buildPatternItems(patternsInput);
-  const deleteRequests: WriteRequestItem[] = existing.patterns.map((p) => ({
+  const deleteRequests: BatchWriteRequest[] = existing.patterns.map((p) => ({
     DeleteRequest: { Key: { pk: `PROBLEM#${problemId}`, sk: `PATTERN#${p.patternId}` } },
   }));
 
@@ -297,7 +285,7 @@ async function deleteProblem(problemId: string): Promise<ApiResult> {
   const existing = allProblems.find((p) => p.problemId === problemId);
   if (!existing) return err(404, "問題が見つかりません");
 
-  const deleteRequests: WriteRequestItem[] = [
+  const deleteRequests: BatchWriteRequest[] = [
     { DeleteRequest: { Key: { pk: `PROBLEM#${problemId}`, sk: "META" } } },
     ...existing.patterns.map((p) => ({
       DeleteRequest: { Key: { pk: `PROBLEM#${problemId}`, sk: `PATTERN#${p.patternId}` } },
@@ -555,7 +543,7 @@ async function importCsv(event: ApiEvent): Promise<ApiResult> {
 
   // バリデーション済み: 新しい問題として登録する（CSV取込は有効=trueで登録する）
   const baseTime = Date.now();
-  const writeRequests: WriteRequestItem[] = [];
+  const writeRequests: BatchWriteRequest[] = [];
   const problems: Problem[] = [];
 
   labelOrder.forEach((label, index) => {

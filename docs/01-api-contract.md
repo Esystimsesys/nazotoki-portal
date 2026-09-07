@@ -34,8 +34,12 @@
 - データ量が小さいため、有効問題＋パターンの取得は `Scan` で可（アクセスパターンが単純）。
 
 ### 3. Submissions テーブル（env: `TABLE_SUBMISSIONS`）
-- PK: `pk` (S) = `TEAM#<teamId>`、SK: `sk` (S) = `SUBMISSION#<submittedAt>#<submissionId>`
+- PK: `pk` (S) = `TEAM#<teamId>`、SK: `sk` (S) = `SUBMISSION#CODE#<code>`
 - 属性: `submissionId` (S), `teamId` (S), `code` (S), `problemId` (S|null), `patternId` (S|null), `isCorrect` (BOOL), `prizeAwarded` (N), `submittedAt` (S)
+
+- 旧形式 `SUBMISSION#<submittedAt>#<submissionId>` はそのまま読み取り可能。履歴は強整合Queryで全ページ取得し、旧形式の重複も検出する。
+- 新規回答はチーム×コードの固定キーへ条件付きPut。競合側は `alreadyAnswered: true` / `penalty: null` を返し、追加記録しない。
+- 時系列表示は `submittedAt` でソートする。旧版と新版の書込みが混在しないよう受付を停止してデプロイする。過去に発生済みの重複は自動削除しない。
 
 ### 4. Admins テーブル（env: `TABLE_ADMINS`）
 - PK: `pk` (S) = `ADMIN#<adminId>`
