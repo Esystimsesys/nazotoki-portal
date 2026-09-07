@@ -46,3 +46,21 @@
 - origin/mainに新規変更なしを確認。
 - 修正コミット: backend `fd1c19e`、frontend `87c9d5c`、OIDC `cf7d3a0`。
 - OIDCロールの変更セットを作成中。確認後に個別反映し、mainへのpushでActionsを開始する。
+
+### OIDC反映完了・アプリデプロイ開始
+
+- `nazotoki-cfn-code` の変更セットはロール1件のModify・Replacement=False。実行後UPDATE_COMPLETE。
+- IAM GetRoleでStringEqualsの2形式が本番へ反映されたことを確認。
+- mainマージコミット `42c4d2f` をoriginへpush済み。Actionsの完了を確認中。
+- Actions run `34103049737`: 更新済みOIDC条件でAWS認証成功、型チェックと34テスト成功。アプリスタック更新中。
+
+### 本番反映完了
+
+- アプリ反映コミット: `42c4d2f`。
+- GitHub Actions: https://github.com/Esystimsesys/nazotoki-portal/actions/runs/34103049737 — backend/frontendとも成功。
+- 本番Lambda配布コードで固定キー・条件付きPut・強整合読取・UnprocessedItems再送を確認。LastUpdateStatus=Successful。
+- `/login`、`/admin/login` は200。新しい `/assets/index-DjsCNH5_.js` 配信と状態不明表示のコードを確認。認証なし `/api/event` は401。
+- CloudFront invalidation `IA7CCQQY1ZFWKPY76SN4Y8XFO7` はCompleted。
+- 本番受付は反映前と同じ `running=false`、endedAt=`2026-08-25T04:00:55.295Z`。イベント・回答データの変更なし。
+- 実ブラウザのログイン操作・回答送信は未実施。ActionsにNode20対象Actionの非推奨警告あり（Node24へ強制実行され、ジョブは成功）。
+- 完了記録のみの追記は `[skip ci]` でコミットし、同じアプリの再デプロイを避ける。
