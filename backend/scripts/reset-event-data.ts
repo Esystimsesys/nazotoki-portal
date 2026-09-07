@@ -21,23 +21,14 @@
  * なお Problems テーブルにはイベントの開始/終了状態（pk=EVENT / sk=STATE）も
  * 同居しているため、`--problems` を指定するとその状態行も消えて「未開始」に戻る。
  */
-import { BatchWriteCommand } from "@aws-sdk/lib-dynamodb";
-import { ddb, requiredEnv, scanAll } from "../shared/dynamo.ts";
+import { batchWrite } from "../shared/batch-write.ts";
+import { requiredEnv, scanAll } from "../shared/dynamo.ts";
 
 const CONFIRM_FLAG = "--yes";
 
-/** DynamoDBのBatchWriteItemは1回25件までのため分割して削除する */
+/** DynamoDBのBatchWriteItemは25件ずつ送信し、未処理項目は再送する */
 async function deleteAll(tableName: string, keys: Record<string, unknown>[]): Promise<void> {
-  for (let i = 0; i < keys.length; i += 25) {
-    const chunk = keys.slice(i, i + 25);
-    await ddb().send(
-      new BatchWriteCommand({
-        RequestItems: {
-          [tableName]: chunk.map((Key) => ({ DeleteRequest: { Key } })),
-        },
-      }),
-    );
-  }
+  await batchWrite(tableName, keys.map((Key) => ({ DeleteRequest: { Key } })));
 }
 
 async function resetTable(tableName: string, hasSortKey: boolean, apply: boolean): Promise<void> {

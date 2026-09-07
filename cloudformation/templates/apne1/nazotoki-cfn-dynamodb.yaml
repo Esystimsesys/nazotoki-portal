@@ -61,7 +61,8 @@ Resources:
 
   # ---------------------------------------------------------------------
   # Submissions: append-only answer log. PK pk = TEAM#<teamId>, SK sk =
-  # SUBMISSION#<submittedAt>#<submissionId> (sortable by time within a team).
+  # SUBMISSION#CODE#<code> (conditional Put prevents duplicates per team).
+  # Legacy timestamp/UUID keys remain readable; sort by submittedAt in code.
   # No GSI - per-team history is a Query on pk, and admin summary/ranking
   # loops over teams (small event-scale team count) per docs/00-design.md.
   # ---------------------------------------------------------------------
