@@ -162,6 +162,7 @@ export function AdminProblemsPage() {
       )}
       {isError && <ApiErrorAlert error={error} />}
       {bulkMutation.isError && <Box sx={{ mb: 2 }}><ApiErrorAlert error={bulkMutation.error} /></Box>}
+      {setEnabledMutation.isError && <Box sx={{ mb: 2 }}><ApiErrorAlert error={setEnabledMutation.error} /></Box>}
       {deleteMutation.isError && <Box sx={{ mb: 2 }}><ApiErrorAlert error={deleteMutation.error} /></Box>}
 
       {!isLoading && !isError && problems.length === 0 && (

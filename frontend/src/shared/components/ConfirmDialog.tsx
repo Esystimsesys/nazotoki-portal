@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Button from "@mui/material/Button";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
@@ -13,6 +14,8 @@ interface ConfirmDialogProps {
   cancelLabel?: string;
   danger?: boolean;
   loading?: boolean;
+  confirmDisabled?: boolean;
+  children?: ReactNode;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -26,22 +29,25 @@ export function ConfirmDialog({
   cancelLabel = "キャンセル",
   danger = false,
   loading = false,
+  confirmDisabled = false,
+  children,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
   return (
     <Dialog open={open} onClose={onCancel} maxWidth="xs" fullWidth>
       <DialogTitle sx={{ fontWeight: 800 }}>{title}</DialogTitle>
-      {description && (
+      {(description || children) && (
         <DialogContent>
-          <DialogContentText sx={{ whiteSpace: "pre-line" }}>{description}</DialogContentText>
+          {description && <DialogContentText sx={{ whiteSpace: "pre-line" }}>{description}</DialogContentText>}
+          {children}
         </DialogContent>
       )}
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button onClick={onCancel} color="inherit" disabled={loading}>
           {cancelLabel}
         </Button>
-        <Button onClick={onConfirm} color={danger ? "error" : "primary"} variant="contained" disabled={loading}>
+        <Button onClick={onConfirm} color={danger ? "error" : "primary"} variant="contained" disabled={loading || confirmDisabled}>
           {confirmLabel}
         </Button>
       </DialogActions>

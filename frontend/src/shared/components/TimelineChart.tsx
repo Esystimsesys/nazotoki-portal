@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import { formatYen, formatOku, seriesColor } from "./charts";
@@ -47,13 +47,14 @@ export function TimelineChart({ series }: { series: TimelineSeries[] }) {
   const [hoverX, setHoverX] = useState<number | null>(null);
 
   // 親の幅に追従する（レイアウト確定後に一度読む。ResizeObserverで追随）
-  const setWrap = (el: HTMLDivElement | null) => {
+  const setWrap = useCallback((el: HTMLDivElement | null) => {
     wrapRef.current = el;
     if (!el) return;
     setWidth(el.clientWidth);
     const ro = new ResizeObserver(() => setWidth(el.clientWidth));
     ro.observe(el);
-  };
+    return () => ro.disconnect();
+  }, []);
 
   const model = useMemo(() => {
     const times = series.flatMap((s) => s.points.map((p) => new Date(p.at).getTime()));
