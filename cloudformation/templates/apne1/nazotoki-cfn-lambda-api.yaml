@@ -436,6 +436,15 @@ Resources:
       RouteKey: "POST /api/admin/teams"
       AuthorizationType: NONE
       Target: !Sub integrations/${teamsIntegration}
+  routeAdminTeamsUpdate:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      # チーム名・管理者メモの更新。loginCode の再発行と active の切替は
+      # 別ルートに分かれているため、ここでは触らない。
+      RouteKey: "PUT /api/admin/teams/{teamId}"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${teamsIntegration}
   routeAdminTeamsDelete:
     Type: AWS::ApiGatewayV2::Route
     Properties:

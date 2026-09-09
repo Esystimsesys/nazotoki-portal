@@ -1,11 +1,14 @@
 import { apiClient } from "./client";
-import type { Team } from "./types";
+import type { Team, TeamInput } from "./types";
 
 export const teamsApi = {
   /** GET /api/admin/teams */
   list: () => apiClient.get<{ teams: Team[] }>("/admin/teams", "admin"),
   /** POST /api/admin/teams */
-  create: (teamName: string) => apiClient.post<{ team: Team }>("/admin/teams", { teamName }, "admin"),
+  create: (input: TeamInput) => apiClient.post<{ team: Team }>("/admin/teams", input, "admin"),
+  /** PUT /api/admin/teams/{teamId}（チーム名・メモの更新） */
+  update: (teamId: string, input: TeamInput) =>
+    apiClient.put<{ team: Team }>(`/admin/teams/${teamId}`, input, "admin"),
   /** DELETE /api/admin/teams/{teamId}（論理削除。ログイン不可になるが集計には残る） */
   remove: (teamId: string) => apiClient.delete<{ ok: true }>(`/admin/teams/${teamId}`, "admin"),
   /** DELETE /api/admin/teams/{teamId}/purge（完全削除。回答記録ごと消える） */

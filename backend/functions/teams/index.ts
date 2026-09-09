@@ -3,6 +3,7 @@
  * - POST   /api/auth/team-login                    チーム共有コードでログイン（team JWT発行、認証不要）
  * - GET    /api/admin/teams                         チーム一覧（admin）
  * - POST   /api/admin/teams                         チーム新規登録（admin）。loginCodeはサーバー自動生成
+ * - PUT    /api/admin/teams/{teamId}                チーム名・メモの更新（admin）
  * - DELETE /api/admin/teams/{teamId}                論理削除（active=false、admin）
  * - DELETE /api/admin/teams/{teamId}/purge          完全削除（回答記録ごと物理削除、admin）
  * - POST   /api/admin/teams/{teamId}/regenerate-code ログインコード再発行（admin）
@@ -35,6 +36,8 @@ interface TeamItem {
   loginCode: string;
   active: boolean;
   createdAt: string;
+  /** 管理者向けメモ（メンバー名など）。未設定なら属性自体を持たない */
+  note?: string;
 }
 
 interface Team {
@@ -43,6 +46,7 @@ interface Team {
   loginCode: string;
   active: boolean;
   createdAt: string;
+  note?: string;
 }
 
 function toTeam(item: TeamItem): Team {
@@ -52,7 +56,32 @@ function toTeam(item: TeamItem): Team {
     loginCode: item.loginCode,
     active: item.active,
     createdAt: item.createdAt,
+    ...(item.note !== undefined ? { note: item.note } : {}),
   };
+}
+
+// メモは自由記述なので上限を設けておく。メンバー名の控えや申し送りには十分な長さで、
+// DynamoDBの1アイテム400KB制限に近づかないようにするための歯止め。
+const NOTE_MAX_LENGTH = 1000;
+
+type ParsedNote = { ok: true; note: string | null } | { ok: false; message: string };
+
+/**
+ * body.note をパースする。戻り値の null は「メモなし」の意味。
+ *
+ * 空文字・未指定・null をすべて「メモなし」に寄せているのは、一覧表示で
+ * 空文字と未設定を区別する意味がなく、DynamoDB側にも空文字の属性を
+ * 残したくないため。
+ */
+function parseNoteInput(raw: unknown): ParsedNote {
+  if (raw === undefined || raw === null) return { ok: true, note: null };
+  if (typeof raw !== "string") return { ok: false, message: "note は文字列で指定してください" };
+  const note = raw.trim();
+  if (!note) return { ok: true, note: null };
+  if (note.length > NOTE_MAX_LENGTH) {
+    return { ok: false, message: `note は${NOTE_MAX_LENGTH}文字以内で指定してください` };
+  }
+  return { ok: true, note };
 }
 
 const LOGIN_CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -134,6 +163,8 @@ async function createTeam(event: ApiEvent): Promise<ApiResult> {
   if (typeof teamName !== "string" || !teamName.trim()) {
     return err(400, "teamName を指定してください");
   }
+  const parsedNote = parseNoteInput(body?.note);
+  if (!parsedNote.ok) return err(400, parsedNote.message);
 
   const loginCode = await generateUniqueLoginCode();
   const teamId = randomUUID();
@@ -144,9 +175,56 @@ async function createTeam(event: ApiEvent): Promise<ApiResult> {
     loginCode,
     active: true,
     createdAt: new Date().toISOString(),
+    ...(parsedNote.note !== null ? { note: parsedNote.note } : {}),
   };
   await ddb().send(new PutCommand({ TableName: requiredEnv("TABLE_TEAMS"), Item: item }));
   return ok({ team: toTeam(item) }, 201);
+}
+
+/**
+ * PUT /api/admin/teams/{teamId}（チーム名・メモの更新）
+ *
+ * 編集できるのはこの2つだけ。loginCode は再発行エンドポイント、active は
+ * 無効化エンドポイントと役割が分かれているため、ここでは触らない。
+ *
+ * チーム名はどのテーブルにも非正規化していない（ランキング等は毎回 teams
+ * テーブルから引く）ので、ここを更新すれば集計画面の表示もそのまま追従する。
+ * ただし参加者が持っている team JWT には発行時のチーム名が入っているため、
+ * 参加者画面のヘッダーは再ログインするまで旧名のままになる。
+ */
+async function updateTeam(event: ApiEvent, teamId: string): Promise<ApiResult> {
+  const body = getJsonBody(event);
+  const teamName = body?.teamName;
+  if (typeof teamName !== "string" || !teamName.trim()) {
+    return err(400, "teamName を指定してください");
+  }
+  const parsedNote = parseNoteInput(body?.note);
+  if (!parsedNote.ok) return err(400, parsedNote.message);
+
+  const res = await ddb()
+    .send(
+      new UpdateCommand({
+        TableName: requiredEnv("TABLE_TEAMS"),
+        Key: { pk: `TEAM#${teamId}` },
+        // メモが空なら属性ごと削除する（空文字を残さない）
+        UpdateExpression:
+          parsedNote.note !== null
+            ? "SET teamName = :teamName, note = :note"
+            : "SET teamName = :teamName REMOVE note",
+        ConditionExpression: "attribute_exists(pk)",
+        ExpressionAttributeValues: {
+          ":teamName": teamName.trim(),
+          ...(parsedNote.note !== null ? { ":note": parsedNote.note } : {}),
+        },
+        ReturnValues: "ALL_NEW",
+      }),
+    )
+    .catch((e) => {
+      if (e?.name === "ConditionalCheckFailedException") return null;
+      throw e;
+    });
+  if (!res) return err(404, "チームが見つかりません");
+  return ok({ team: toTeam(res.Attributes as TeamItem) });
 }
 
 /** DELETE /api/admin/teams/{teamId}（論理削除） */
@@ -259,6 +337,10 @@ export const handler = async (event: ApiEvent): Promise<ApiResult> =>
     }
 
     const teamIdMatch = path.match(/^\/api\/admin\/teams\/([^/]+)$/);
+    if (method === "PUT" && teamIdMatch) {
+      requireAuth(event, "admin");
+      return updateTeam(event, decodeURIComponent(teamIdMatch[1]));
+    }
     if (method === "DELETE" && teamIdMatch) {
       requireAuth(event, "admin");
       return deleteTeam(decodeURIComponent(teamIdMatch[1]));
