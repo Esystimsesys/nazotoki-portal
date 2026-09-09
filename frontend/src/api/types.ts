@@ -6,6 +6,15 @@ export interface Team {
   loginCode: string;
   active: boolean;
   createdAt: string;
+  /** 管理者向けメモ（メンバー名など）。参加者には表示しない。未設定なら省略される */
+  note?: string;
+}
+
+/** POST /admin/teams・PUT /admin/teams/{teamId} のリクエストボディ */
+export interface TeamInput {
+  teamName: string;
+  /** 空文字を送るとメモを削除する扱いになる */
+  note?: string;
 }
 
 export interface Pattern {

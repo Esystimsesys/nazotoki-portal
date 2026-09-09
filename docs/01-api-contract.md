@@ -55,7 +55,7 @@
 | 関数（物理名） | 担当ルート | 環境変数 |
 | --- | --- | --- |
 | `nazotoki-admin-auth` | `POST /api/admin/login` | `TABLE_ADMINS`, `JWT_SECRET` |
-| `nazotoki-teams` | `POST /api/auth/team-login`、`GET/POST /api/admin/teams`、`DELETE /api/admin/teams/{teamId}`、`DELETE /api/admin/teams/{teamId}/purge`、`POST /api/admin/teams/{teamId}/regenerate-code` | `TABLE_TEAMS`, `TABLE_SUBMISSIONS`, `JWT_SECRET` |
+| `nazotoki-teams` | `POST /api/auth/team-login`、`GET/POST /api/admin/teams`、`PUT /api/admin/teams/{teamId}`、`DELETE /api/admin/teams/{teamId}`、`DELETE /api/admin/teams/{teamId}/purge`、`POST /api/admin/teams/{teamId}/regenerate-code` | `TABLE_TEAMS`, `TABLE_SUBMISSIONS`, `JWT_SECRET` |
 | `nazotoki-problems` | `GET/POST /api/admin/problems`、`PUT/DELETE /api/admin/problems/{problemId}`、`PUT /api/admin/problems/{problemId}/enabled`、`PUT /api/admin/problems/enabled`（一括）、`POST /api/admin/problems/csv`、`GET /api/event`、`PUT /api/admin/event` | `TABLE_PROBLEMS`, `JWT_SECRET` |
 | `nazotoki-submissions` | `POST /api/submissions`、`DELETE /api/admin/submissions`、`GET /api/admin/summary`、`GET /api/admin/timeline`、`GET /api/admin/analysis`、`GET /api/admin/teams/{teamId}/submissions` | `TABLE_SUBMISSIONS`, `TABLE_PROBLEMS`, `TABLE_TEAMS`, `JWT_SECRET` |
 
@@ -87,11 +87,19 @@
 ### チーム管理（admin）
 
 **GET /api/admin/teams** → res 200: `{ "teams": Team[] }`
-- `Team = { teamId, teamName, loginCode, active, createdAt }`
+- `Team = { teamId, teamName, loginCode, active, createdAt, note? }`
+- `note` は管理者向けメモ（メンバー名の控えなど）。未設定のチームではキー自体が省略される。参加者向けのレスポンスには一切含めない。
 
 **POST /api/admin/teams**
-- req: `{ "teamName": string }`
+- req: `{ "teamName": string, "note"?: string }`
 - res 201: `{ "team": Team }`（`loginCode` はサーバーが自動生成: 6桁英大文字＋数字、一意）
+
+**PUT /api/admin/teams/{teamId}**（チーム名・メモの更新）
+- req: `{ "teamName": string, "note"?: string }`
+- res 200: `{ "team": Team }`。存在しないteamIdは404、`teamName` が空なら400。
+- 編集できるのはこの2つだけ。`loginCode` は `/regenerate-code`、`active` は `DELETE {teamId}` と役割が分かれているため、ここでは変更しない。
+- `note` は trim 後が空文字（または未指定・`null`）なら属性ごと削除する。上限1000文字を超えたら400。
+- チーム名はどのテーブルにも非正規化していない（ランキング・分析・タイムラインは毎回 `nazotoki-teams` から引く）ため、更新すれば集計画面の表示もそのまま追従する。ただし参加者が持っている team JWT には発行時のチーム名が入っているので、参加者画面の表示は再ログインするまで旧名のまま。
 
 **DELETE /api/admin/teams/{teamId}** → res 200: `{ "ok": true }`
 - 論理削除（`active=false`）。回答記録は残す。

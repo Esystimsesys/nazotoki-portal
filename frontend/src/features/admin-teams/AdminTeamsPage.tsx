@@ -13,12 +13,12 @@ import TableRow from "@mui/material/TableRow";
 import Typography from "@mui/material/Typography";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { teamsApi } from "../../api/teams";
-import type { Team } from "../../api/types";
+import type { Team, TeamInput } from "../../api/types";
 import { ApiErrorAlert } from "../../shared/components/ApiErrorAlert";
 import { ConfirmDialog } from "../../shared/components/ConfirmDialog";
 import { NeonPanel } from "../../shared/components/NeonPanel";
 import { formatDate } from "../../shared/format";
-import { NewTeamModal } from "./NewTeamModal";
+import { TeamFormModal } from "./TeamFormModal";
 
 const QUERY_KEY = ["admin", "teams"];
 
@@ -27,6 +27,7 @@ export function AdminTeamsPage() {
   const { data, isLoading, isError, error } = useQuery({ queryKey: QUERY_KEY, queryFn: () => teamsApi.list() });
 
   const [newTeamOpen, setNewTeamOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<Team | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Team | null>(null);
   // 完全削除は論理削除とは別の確認ダイアログにする。取り違えると復元できないため。
   const [purgeTarget, setPurgeTarget] = useState<Team | null>(null);
@@ -34,10 +35,23 @@ export function AdminTeamsPage() {
   const invalidate = () => queryClient.invalidateQueries({ queryKey: QUERY_KEY });
 
   const createMutation = useMutation({
-    mutationFn: (teamName: string) => teamsApi.create(teamName),
+    mutationFn: (input: TeamInput) => teamsApi.create(input),
     onSuccess: () => {
       invalidate();
       setNewTeamOpen(false);
+    },
+  });
+  const updateMutation = useMutation({
+    mutationFn: ({ teamId, input }: { teamId: string; input: TeamInput }) =>
+      teamsApi.update(teamId, input),
+    onSuccess: () => {
+      invalidate();
+      // チーム名はランキング・分析画面でも表示しているため、それらのキャッシュも捨てる
+      queryClient.invalidateQueries({ queryKey: ["admin", "summary"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "analysis"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "timeline"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "team-submissions"] });
+      setEditTarget(null);
     },
   });
   const purgeMutation = useMutation({
@@ -101,6 +115,7 @@ export function AdminTeamsPage() {
         </Box>
       )}
       {isError && <ApiErrorAlert error={error} />}
+      {updateMutation.isError && <Box sx={{ mb: 2 }}><ApiErrorAlert error={updateMutation.error} /></Box>}
       {removeMutation.isError && <Box sx={{ mb: 2 }}><ApiErrorAlert error={removeMutation.error} /></Box>}
       {purgeMutation.isError && <Box sx={{ mb: 2 }}><ApiErrorAlert error={purgeMutation.error} /></Box>}
       {regenerateMutation.isError && <Box sx={{ mb: 2 }}><ApiErrorAlert error={regenerateMutation.error} /></Box>}
@@ -117,6 +132,9 @@ export function AdminTeamsPage() {
                   ログインコード
                 </TableCell>
                 <TableCell sx={{ color: "text.secondary", fontSize: 11.5, bgcolor: "rgba(0,0,0,0.2)" }}>
+                  メモ
+                </TableCell>
+                <TableCell sx={{ color: "text.secondary", fontSize: 11.5, bgcolor: "rgba(0,0,0,0.2)" }}>
                   作成日
                 </TableCell>
                 <TableCell sx={{ color: "text.secondary", fontSize: 11.5, bgcolor: "rgba(0,0,0,0.2)" }}>
@@ -130,7 +148,7 @@ export function AdminTeamsPage() {
             <TableBody>
               {teams.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5}>
+                  <TableCell colSpan={6}>
                     <Typography color="text.secondary" sx={{ textAlign: "center", py: 3 }} component="div">
                       まだチームが登録されていません。
                     </Typography>
@@ -148,7 +166,22 @@ export function AdminTeamsPage() {
                       sx={{ bgcolor: "rgba(168,85,247,0.15)", color: "#d9c6ff", fontWeight: 700 }}
                     />
                   </TableCell>
-                  <TableCell>{formatDate(team.createdAt)}</TableCell>
+                  <TableCell sx={{ maxWidth: 240 }}>
+                    {team.note ? (
+                      // 改行入りのメモ（メンバーを1行ずつ書くなど）をそのまま読めるようにする
+                      <Typography
+                        sx={{ fontSize: 12, whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+                        component="div"
+                      >
+                        {team.note}
+                      </Typography>
+                    ) : (
+                      <Typography sx={{ fontSize: 12, color: "text.secondary" }} component="div">
+                        —
+                      </Typography>
+                    )}
+                  </TableCell>
+                  <TableCell sx={{ whiteSpace: "nowrap" }}>{formatDate(team.createdAt)}</TableCell>
                   <TableCell>
                     <Chip
                       size="small"
@@ -163,6 +196,14 @@ export function AdminTeamsPage() {
                   </TableCell>
                   <TableCell>
                     <Stack direction="row" spacing={1}>
+                      <Button
+                        size="small"
+                        color="inherit"
+                        variant="outlined"
+                        onClick={() => setEditTarget(team)}
+                      >
+                        編集
+                      </Button>
                       <Button
                         size="small"
                         color="inherit"
@@ -198,12 +239,22 @@ export function AdminTeamsPage() {
         </TableContainer>
       )}
 
-      <NewTeamModal
+      <TeamFormModal
         open={newTeamOpen}
+        team={null}
         submitting={createMutation.isPending}
         error={createMutation.error}
         onClose={() => setNewTeamOpen(false)}
-        onSubmit={(teamName) => createMutation.mutate(teamName)}
+        onSubmit={(input) => createMutation.mutate(input)}
+      />
+
+      <TeamFormModal
+        open={editTarget !== null}
+        team={editTarget}
+        submitting={updateMutation.isPending}
+        error={updateMutation.error}
+        onClose={() => setEditTarget(null)}
+        onSubmit={(input) => editTarget && updateMutation.mutate({ teamId: editTarget.teamId, input })}
       />
 
       <ConfirmDialog
