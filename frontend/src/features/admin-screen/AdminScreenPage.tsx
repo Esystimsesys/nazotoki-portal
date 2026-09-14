@@ -8,6 +8,7 @@ import { submissionsApi } from "../../api/submissions";
 import { ApiErrorAlert } from "../../shared/components/ApiErrorAlert";
 import { NeonPanel } from "../../shared/components/NeonPanel";
 import { formatPrize, prizeColor } from "../../shared/format";
+import { withPrizeRanks } from "../../shared/sort";
 import { neon } from "../../app/theme";
 
 const MEDALS = ["🥇", "🥈", "🥉"];
@@ -45,7 +46,7 @@ export function AdminScreenPage() {
     }
   };
 
-  const ranking = data?.ranking ?? [];
+  const ranking = withPrizeRanks(data?.ranking ?? []);
 
   // 未開始と終了後はどちらも running=false だが、会場に見せる意味がまったく違うので分ける
   const eventTone = data?.event.running
@@ -154,7 +155,7 @@ export function AdminScreenPage() {
                 まだ回答記録がありません。
               </Typography>
             )}
-            {ranking.map((row, i) => (
+            {ranking.map(({ row, rank }) => (
               <Box
                 key={row.teamId}
                 sx={{
@@ -165,18 +166,18 @@ export function AdminScreenPage() {
                   py: isFullscreen ? 1.75 : 1,
                   borderRadius: 2,
                   mb: 0.5,
-                  bgcolor: i < 3 ? "rgba(244,197,66,0.08)" : "transparent",
-                  border: i < 3 ? `1px solid ${neon.borderGlow}` : "1px solid transparent",
+                  bgcolor: rank <= 3 ? "rgba(244,197,66,0.08)" : "transparent",
+                  border: rank <= 3 ? `1px solid ${neon.borderGlow}` : "1px solid transparent",
                 }}
               >
                 <Box sx={{ width: isFullscreen ? 48 : 30, textAlign: "center", fontSize: isFullscreen ? 30 : 18, flex: "0 0 auto" }}>
-                  {MEDALS[i] ?? i + 1}
+                  {MEDALS[rank - 1] ?? rank}
                 </Box>
                 <Typography
                   sx={{
                     flex: 1,
                     fontSize: isFullscreen ? 26 : 15,
-                    fontWeight: i < 3 ? 900 : 700,
+                    fontWeight: rank <= 3 ? 900 : 700,
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
