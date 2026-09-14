@@ -21,6 +21,7 @@ import { ProblemReachPanel, WrongAnswerPanel } from "./AnalysisPanels";
 import { formatPrize, prizeColor } from "../../shared/format";
 import { downloadCsv, problemStatsToCsv, rankingToCsv, timestampedFilename } from "../../shared/csv";
 import { TeamHistoryModal } from "./TeamHistoryModal";
+import { compareTeamNames } from "../../shared/sort";
 
 const MEDALS = ["🥇", "🥈", "🥉"];
 
@@ -75,6 +76,12 @@ export function AdminDashboardPage() {
       setClearOpen(false);
     },
   });
+
+  // APIのrankingは合計賞金順。この順番から実順位を確定してから、画面では
+  // チームを探しやすい名前順に並べる（順位番号・CSVの賞金順は変えない）。
+  const teamsByName = (data?.ranking ?? [])
+    .map((row, index) => ({ row, rank: index + 1 }))
+    .sort((a, b) => compareTeamNames(a.row, b.row));
 
   return (
     <Box>
@@ -170,7 +177,7 @@ export function AdminDashboardPage() {
             <>
               <Typography sx={{ fontSize: 14, fontWeight: 800, mb: 1 }}>賞金の推移</Typography>
               <NeonPanel sx={{ mb: 3, p: 2 }}>
-                <TimelineChart series={timelineData.series} />
+                <TimelineChart series={[...timelineData.series].sort(compareTeamNames)} />
                 <Typography sx={{ fontSize: 10.5, color: "text.secondary", mt: 1.25 }}>
                   縦軸は億円表記。賞金は回答した瞬間に動くため階段状に描いています。グラフに
                   マウスを重ねると、その時点の各チームの賞金を表示します。
@@ -179,13 +186,13 @@ export function AdminDashboardPage() {
             </>
           )}
 
-          <Typography sx={{ fontSize: 14, fontWeight: 800, mb: 1 }}>賞金ランキング</Typography>
+          <Typography sx={{ fontSize: 14, fontWeight: 800, mb: 1 }}>チーム別賞金（チーム名順）</Typography>
           <NeonPanel sx={{ mb: 3, p: 2 }}>
             <BarChart
-              rows={data.ranking.map((r) => ({
-                key: r.teamId,
-                label: r.teamName,
-                value: r.totalPrize,
+              rows={teamsByName.map(({ row }) => ({
+                key: row.teamId,
+                label: row.teamName,
+                value: row.totalPrize,
               }))}
             />
             <Typography sx={{ fontSize: 10.5, color: "text.secondary", mt: 1.25 }}>
@@ -193,7 +200,7 @@ export function AdminDashboardPage() {
             </Typography>
           </NeonPanel>
 
-          <Typography sx={{ fontSize: 14, fontWeight: 800, mb: 1 }}>ランキング（合計賞金順）</Typography>
+          <Typography sx={{ fontSize: 14, fontWeight: 800, mb: 1 }}>チーム別成績（チーム名順）</Typography>
           <TableContainer component={NeonPanel} sx={{ p: 0, mb: 3 }}>
             <Table size="small">
               <TableHead>
@@ -215,7 +222,7 @@ export function AdminDashboardPage() {
                     </TableCell>
                   </TableRow>
                 )}
-                {data.ranking.map((row, i) => (
+                {teamsByName.map(({ row, rank }) => (
                   <TableRow
                     key={row.teamId}
                     hover
@@ -223,7 +230,9 @@ export function AdminDashboardPage() {
                     onClick={() => setSelectedTeam({ teamId: row.teamId, teamName: row.teamName })}
                   >
                     <TableCell>
-                      <Box sx={{ width: 30, textAlign: "center", fontSize: 18 }}>{MEDALS[i] ?? i + 1}</Box>
+                      <Box sx={{ width: 30, textAlign: "center", fontSize: 18 }}>
+                        {MEDALS[rank - 1] ?? rank}
+                      </Box>
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>{row.teamName}</TableCell>
                     <TableCell>{row.correctCount}</TableCell>
