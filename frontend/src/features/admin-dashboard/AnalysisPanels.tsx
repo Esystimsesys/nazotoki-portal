@@ -4,6 +4,7 @@ import Typography from "@mui/material/Typography";
 import type { AnalysisResponse } from "../../api/types";
 import { CHART_COLORS, Legend, formatOku, formatYen } from "../../shared/components/charts";
 import { NeonPanel } from "../../shared/components/NeonPanel";
+import { compareTeamNames } from "../../shared/sort";
 
 /**
  * 問題の到達状況。
@@ -16,7 +17,8 @@ import { NeonPanel } from "../../shared/components/NeonPanel";
  * 次回の問題数と制限時間を決める材料になる。
  */
 export function ProblemReachPanel({ data }: { data: AnalysisResponse }) {
-  const { teams, problems } = data;
+  const teams = [...data.teams].sort(compareTeamNames);
+  const { problems } = data;
   const solvedCount = (n: number) => problems.filter((p) => p.solvedTeamIds.length === n).length;
   const untouched = solvedCount(0);
   const reached = problems.length - untouched;
