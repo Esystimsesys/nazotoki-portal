@@ -9,6 +9,9 @@ export const teamsApi = {
   /** PUT /api/admin/teams/{teamId}（チーム名・メモの更新） */
   update: (teamId: string, input: TeamInput) =>
     apiClient.put<{ team: Team }>(`/admin/teams/${teamId}`, input, "admin"),
+  /** PUT /api/admin/teams/{teamId}/active（有効・無効の切替） */
+  setActive: (teamId: string, active: boolean) =>
+    apiClient.put<{ team: Team }>(`/admin/teams/${teamId}/active`, { active }, "admin"),
   /** DELETE /api/admin/teams/{teamId}（論理削除。ログイン不可になるが集計には残る） */
   remove: (teamId: string) => apiClient.delete<{ ok: true }>(`/admin/teams/${teamId}`, "admin"),
   /** DELETE /api/admin/teams/{teamId}/purge（完全削除。回答記録ごと消える） */

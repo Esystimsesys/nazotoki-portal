@@ -11,4 +11,6 @@ export const eventApi = {
   /** PUT /api/admin/event（開始/終了切替） */
   setRunning: (running: boolean) =>
     apiClient.put<{ event: EventState }>("/admin/event", { running }, "admin"),
+  /** POST /api/admin/event/reset（開始前の状態に戻す。回答記録等は保持） */
+  reset: () => apiClient.post<{ event: EventState }>("/admin/event/reset", undefined, "admin"),
 };

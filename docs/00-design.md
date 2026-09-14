@@ -148,9 +148,10 @@ flowchart LR
 | Lambda | エンドポイント | 用途 |
 | --- | --- | --- |
 | `teams` | `POST /auth/team-login` | チームコードでログイン、チーム用JWT発行 |
-| | `GET /admin/teams`, `POST /admin/teams`, `DELETE /admin/teams/{teamId}`, `POST /admin/teams/{teamId}/regenerate-code` | 管理者向けチーム管理（要admin JWT） |
+| | `GET /admin/teams`, `POST /admin/teams`, `PUT /admin/teams/{teamId}`, `PUT /admin/teams/{teamId}/active`, `DELETE /admin/teams/{teamId}`, `POST /admin/teams/{teamId}/regenerate-code` | 管理者向けチーム管理（要admin JWT） |
 | `problems` | `GET /admin/problems`, `POST /admin/problems`, `PUT /admin/problems/{problemId}`, `DELETE /admin/problems/{problemId}` | 問題・回答パターンのCRUD（要admin JWT） |
 | | `PUT /admin/problems/{problemId}/enabled`, `PUT /admin/problems/enabled`（一括） | 問題の有効/無効切替（個別・全件一括、要admin JWT） |
+| | `GET /event`, `PUT /admin/event`, `POST /admin/event/reset` | イベント状態の参照・開始終了・未開始状態へのリセット |
 | | `POST /admin/problems/csv` | CSVによる問題・回答パターンの一括取込（要admin JWT） |
 | `submissions` | `POST /submissions` | 参加者の回答送信・判定。レスポンスは正解/不正解のみ（賞金額は返さない）（要team JWT） |
 | | `GET /admin/summary` | チームごとの正誤サマリ・合計賞金・ランキング（要admin JWT） |
