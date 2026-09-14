@@ -119,6 +119,69 @@ export interface SummaryResponse {
   stats: SummaryStats;
 }
 
+export interface ReportStats extends SummaryStats {
+  activeTeamCount: number;
+  answeredTeamCount: number;
+  registeredSubmissionCount: number;
+  unregisteredSubmissionCount: number;
+  solvedProblemCount: number;
+  /** 全チームへ実際に加算・減算された賞金の合計 */
+  awardedPrize: number;
+}
+
+export interface ReportTeam {
+  teamId: string;
+  teamName: string;
+  active: boolean;
+  note?: string;
+  correctCount: number;
+  incorrectCount: number;
+  solvedProblemCount: number;
+  wrongProblemCount: number;
+  unregisteredCount: number;
+  gainedPrize: number;
+  lostPrize: number;
+  totalPrize: number;
+}
+
+export interface ReportProblem extends ProblemStat {
+  solvedTeamCount: number;
+  wrongTeamCount: number;
+  wrongChoiceCount: number;
+  /** この問題で実際に加算・減算された賞金の合計 */
+  awardedPrize: number;
+  /** 不正解による減点の合計（0または負の数） */
+  totalPenalty: number;
+}
+
+export interface ReportSubmission {
+  teamId: string;
+  teamName: string;
+  code: string;
+  problemId: string | null;
+  problemLabel: string | null;
+  patternId: string | null;
+  registered: boolean;
+  isCorrect: boolean;
+  /** 一致したパターン本来の賞金。未登録コードなら null */
+  patternPrize: number | null;
+  prizeAwarded: number;
+  patternNote?: string;
+  submittedAt: string;
+}
+
+/** GET /admin/report: 単一の結果レポートを作るための共通スナップショット */
+export interface ReportResponse {
+  generatedAt: string;
+  event: EventState;
+  stats: ReportStats;
+  ranking: RankingEntry[];
+  teams: ReportTeam[];
+  problems: ReportProblem[];
+  /** 未登録コードを含む、保存済み回答の全件 */
+  submissions: ReportSubmission[];
+}
+
 /** 問題1件の到達状況（どのチームが正解したか／誤答したか） */
 export interface AnalysisProblem {
   problemId: string;

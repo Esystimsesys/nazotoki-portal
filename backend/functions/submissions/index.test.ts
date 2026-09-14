@@ -90,3 +90,103 @@ describe("回答受付の重複防止", () => {
     finally { log.mockRestore(); }
   });
 });
+
+describe("結果レポート", () => {
+  it("順位・問題別集計・未登録コードを含む回答履歴を1回で返す", async () => {
+    process.env.TABLE_TEAMS = "teams";
+    send.mockImplementation(async (command: unknown) => {
+      if (command instanceof GetCommand) {
+        return {
+          Item: {
+            running: false,
+            startedAt: "2026-01-01T10:00:00.000Z",
+            endedAt: "2026-01-01T11:00:00.000Z",
+          },
+        };
+      }
+      if (!(command instanceof ScanCommand)) throw new Error("Unexpected command");
+      if (command.input.TableName === "teams") {
+        return {
+          Items: [
+            { teamId: "t1", teamName: "チーム1", active: true, note: "受付A" },
+            { teamId: "t2", teamName: "チーム2", active: false },
+          ],
+        };
+      }
+      if (command.input.TableName === "problems") {
+        return {
+          Items: [
+            { sk: "META", problemId: "p1", label: "問題1", enabled: true, createdAt: "2026-01-01" },
+            { sk: "META", problemId: "p2", label: "問題2", enabled: false, createdAt: "2026-01-02" },
+            { sk: "PATTERN#pt1", problemId: "p1", patternId: "pt1", code: "1111", isCorrect: true, prize: 100, note: "正答" },
+            { sk: "PATTERN#pt2", problemId: "p1", patternId: "pt2", code: "1112", isCorrect: false, prize: -20, note: "罠" },
+            { sk: "PATTERN#pt3", problemId: "p2", patternId: "pt3", code: "2222", isCorrect: true, prize: 50 },
+          ],
+        };
+      }
+      if (command.input.TableName === "submissions") {
+        return {
+          Items: [
+            { teamId: "t1", code: "1111", problemId: "p1", patternId: "pt1", isCorrect: true, prizeAwarded: 100, submittedAt: "2026-01-01T10:10:00.000Z" },
+            { teamId: "t1", code: "1112", problemId: "p1", patternId: "pt2", isCorrect: false, prizeAwarded: -20, submittedAt: "2026-01-01T10:20:00.000Z" },
+            { teamId: "t1", code: "9999", problemId: null, patternId: null, isCorrect: false, prizeAwarded: 0, submittedAt: "2026-01-01T10:30:00.000Z" },
+            { teamId: "t2", code: "2222", problemId: "p2", patternId: "pt3", isCorrect: true, prizeAwarded: 50, submittedAt: "2026-01-01T10:40:00.000Z" },
+          ],
+        };
+      }
+      throw new Error("Unexpected table");
+    });
+
+    const response = await handler({
+      rawPath: "/api/admin/report",
+      requestContext: { http: { method: "GET", path: "/api/admin/report" } },
+    });
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body!);
+
+    expect(body.stats).toMatchObject({
+      teamCount: 2,
+      activeTeamCount: 1,
+      answeredTeamCount: 2,
+      submissionCount: 4,
+      registeredSubmissionCount: 3,
+      unregisteredSubmissionCount: 1,
+      solvedProblemCount: 2,
+      maxPrize: 150,
+      awardedPrize: 130,
+    });
+    expect(body.ranking.map((row: { teamId: string }) => row.teamId)).toEqual(["t1", "t2"]);
+    expect(body.teams.find((team: { teamId: string }) => team.teamId === "t1")).toMatchObject({
+      note: "受付A",
+      correctCount: 1,
+      incorrectCount: 2,
+      solvedProblemCount: 1,
+      wrongProblemCount: 1,
+      unregisteredCount: 1,
+      gainedPrize: 100,
+      lostPrize: -20,
+      totalPrize: 80,
+    });
+    expect(body.problems[0]).toMatchObject({
+      problemId: "p1",
+      solvedTeamCount: 1,
+      wrongTeamCount: 1,
+      wrongChoiceCount: 1,
+      awardedPrize: 80,
+      totalPenalty: -20,
+    });
+    expect(body.submissions).toHaveLength(4);
+    expect(body.submissions.find((submission: { code: string }) => submission.code === "9999")).toMatchObject({
+      registered: false,
+      problemId: null,
+      patternId: null,
+      patternPrize: null,
+    });
+    expect(body.submissions[0]).toMatchObject({
+      code: "1111",
+      problemLabel: "問題1",
+      patternPrize: 100,
+      patternNote: "正答",
+    });
+  });
+});

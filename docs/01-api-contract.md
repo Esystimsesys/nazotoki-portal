@@ -57,7 +57,7 @@
 | `nazotoki-admin-auth` | `POST /api/admin/login` | `TABLE_ADMINS`, `JWT_SECRET` |
 | `nazotoki-teams` | `POST /api/auth/team-login`、`GET/POST /api/admin/teams`、`PUT /api/admin/teams/{teamId}`、`PUT /api/admin/teams/{teamId}/active`、`DELETE /api/admin/teams/{teamId}`、`DELETE /api/admin/teams/{teamId}/purge`、`POST /api/admin/teams/{teamId}/regenerate-code` | `TABLE_TEAMS`, `TABLE_SUBMISSIONS`, `JWT_SECRET` |
 | `nazotoki-problems` | `GET/POST /api/admin/problems`、`PUT/DELETE /api/admin/problems/{problemId}`、`PUT /api/admin/problems/{problemId}/enabled`、`PUT /api/admin/problems/enabled`（一括）、`POST /api/admin/problems/csv`、`GET /api/event`、`PUT /api/admin/event`、`POST /api/admin/event/reset` | `TABLE_PROBLEMS`, `JWT_SECRET` |
-| `nazotoki-submissions` | `POST /api/submissions`、`DELETE /api/admin/submissions`、`GET /api/admin/summary`、`GET /api/admin/timeline`、`GET /api/admin/analysis`、`GET /api/admin/teams/{teamId}/submissions` | `TABLE_SUBMISSIONS`, `TABLE_PROBLEMS`, `TABLE_TEAMS`, `JWT_SECRET` |
+| `nazotoki-submissions` | `POST /api/submissions`、`DELETE /api/admin/submissions`、`GET /api/admin/summary`、`GET /api/admin/report`、`GET /api/admin/timeline`、`GET /api/admin/analysis`、`GET /api/admin/teams/{teamId}/submissions` | `TABLE_SUBMISSIONS`, `TABLE_PROBLEMS`, `TABLE_TEAMS`, `JWT_SECRET` |
 
 共通ロジックは `backend/shared/` に集約:
 - `auth.ts`: JWT署名・検証、`requireAuth(event, role?)` ミドルウェア（`Authorization`検証、role不一致で403 throw）。
@@ -219,6 +219,48 @@
 }
 ```
 - `ranking` は `totalPrize` 降順。
+
+**GET /api/admin/report** → res 200:
+```json
+{
+  "generatedAt": "ISO8601",
+  "event": { "running": false, "startedAt": "ISO8601|null", "endedAt": "ISO8601|null" },
+  "stats": {
+    "teamCount": 0, "activeTeamCount": 0, "answeredTeamCount": 0,
+    "submissionCount": 0, "registeredSubmissionCount": 0, "unregisteredSubmissionCount": 0,
+    "enabledProblemCount": 0, "totalProblemCount": 0, "solvedProblemCount": 0,
+    "maxPrize": 0, "awardedPrize": 0
+  },
+  "ranking": [
+    { "teamId": "string", "teamName": "string", "correctCount": 0,
+      "incorrectCount": 0, "totalPrize": 0 }
+  ],
+  "teams": [
+    { "teamId": "string", "teamName": "string", "active": true, "note": "string?",
+      "correctCount": 0, "incorrectCount": 0, "solvedProblemCount": 0,
+      "wrongProblemCount": 0, "unregisteredCount": 0,
+      "gainedPrize": 0, "lostPrize": 0, "totalPrize": 0 }
+  ],
+  "problems": [
+    { "problemId": "string", "label": "string", "enabled": true,
+      "correctCount": 0, "incorrectCount": 0, "solvedTeamCount": 0,
+      "wrongTeamCount": 0, "wrongChoiceCount": 0,
+      "awardedPrize": 0, "totalPenalty": 0 }
+  ],
+  "submissions": [
+    { "teamId": "string", "teamName": "string", "code": "0000",
+      "problemId": "string|null", "problemLabel": "string|null",
+      "patternId": "string|null", "registered": true, "isCorrect": true,
+      "patternPrize": 0, "prizeAwarded": 0, "patternNote": "string?",
+      "submittedAt": "ISO8601" }
+  ]
+}
+```
+- 結果レポートのExcelファイルを作るため、大会状態・全体集計・順位・チーム別集計・問題別集計・保存済み回答履歴を1回の取得で返す。
+- `teams[]` は、チーム名・有効状態・管理メモに加えて、正解/不正解回答数、正解/誤答問題数、未登録回答数、獲得・減点・合計賞金を含む。
+- `problems[]` は、問題名・有効状態に加えて、正解/誤答チーム数、正解/不正解回答数、不正解選択肢数、賞金増減と減点の合計を含む。
+- `submissions[]` は、チーム・4桁コード・問題・正誤・本来の賞金・実加算額・回答メモ・回答日時を含む。`problemId: null` の未登録コードも、削除後に復元できない記録として省略せず返す。
+- 同じ4桁コードの再入力はSubmission自体を保存しない既存仕様のため、レポートにも現れない。
 
 **GET /api/admin/teams/{teamId}/submissions** → res 200:
 ```json

@@ -155,6 +155,7 @@ flowchart LR
 | | `POST /admin/problems/csv` | CSVによる問題・回答パターンの一括取込（要admin JWT） |
 | `submissions` | `POST /submissions` | 参加者の回答送信・判定。レスポンスは正解/不正解のみ（賞金額は返さない）（要team JWT） |
 | | `GET /admin/summary` | チームごとの正誤サマリ・合計賞金・ランキング（要admin JWT） |
+| | `GET /admin/report` | 大会概要・順位・問題×チーム・問題別集計・回答履歴を含む統合結果レポート用データ（要admin JWT） |
 | | `GET /admin/teams/{teamId}/submissions` | 特定チームの全回答履歴（要admin JWT） |
 | `admin-auth` | `POST /admin/login` | 管理者ログイン、admin JWT発行 |
 

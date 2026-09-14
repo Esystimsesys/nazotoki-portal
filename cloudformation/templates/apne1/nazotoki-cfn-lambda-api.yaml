@@ -593,6 +593,13 @@ Resources:
       RouteKey: "GET /api/admin/summary"
       AuthorizationType: NONE
       Target: !Sub integrations/${submissionsIntegration}
+  routeAdminReport:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "GET /api/admin/report"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${submissionsIntegration}
   routeAdminTeamSubmissions:
     Type: AWS::ApiGatewayV2::Route
     Properties:

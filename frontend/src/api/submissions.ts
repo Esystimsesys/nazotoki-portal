@@ -5,6 +5,7 @@ import type {
   TeamSubmissionsResponse,
   TimelineResponse,
   AnalysisResponse,
+  ReportResponse,
 } from "./types";
 
 export const submissionsApi = {
@@ -12,6 +13,8 @@ export const submissionsApi = {
   submit: (code: string) => apiClient.post<SubmissionResult>("/submissions", { code }, "team"),
   /** GET /api/admin/summary */
   summary: () => apiClient.get<SummaryResponse>("/admin/summary", "admin"),
+  /** GET /api/admin/report（Excel結果レポート用の全データ） */
+  report: () => apiClient.get<ReportResponse>("/admin/report", "admin"),
   /** GET /api/admin/analysis（問題の到達状況・誤答の状況） */
   analysis: () => apiClient.get<AnalysisResponse>("/admin/analysis", "admin"),
   /** GET /api/admin/timeline（チームごとの賞金推移） */
