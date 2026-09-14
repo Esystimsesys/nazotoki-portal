@@ -69,3 +69,18 @@ export async function setEventRunning(running: boolean): Promise<EventState> {
   );
   return next;
 }
+
+/**
+ * 開始・終了時刻を消し、イベントを未開始状態へ戻す。
+ * 問題・チーム・回答記録は別テーブルのデータなので変更しない。
+ */
+export async function resetEventState(): Promise<EventState> {
+  const now = new Date().toISOString();
+  await ddb().send(
+    new PutCommand({
+      TableName: requiredEnv("TABLE_PROBLEMS"),
+      Item: { ...EVENT_KEY, ...INITIAL_STATE, updatedAt: now },
+    }),
+  );
+  return INITIAL_STATE;
+}

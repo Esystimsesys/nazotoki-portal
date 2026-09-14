@@ -28,7 +28,7 @@ export function AdminTeamsPage() {
 
   const [newTeamOpen, setNewTeamOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Team | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<Team | null>(null);
+  const [activeTarget, setActiveTarget] = useState<Team | null>(null);
   // 完全削除は論理削除とは別の確認ダイアログにする。取り違えると復元できないため。
   const [purgeTarget, setPurgeTarget] = useState<Team | null>(null);
 
@@ -64,11 +64,12 @@ export function AdminTeamsPage() {
     },
   });
 
-  const removeMutation = useMutation({
-    mutationFn: (teamId: string) => teamsApi.remove(teamId),
+  const activeMutation = useMutation({
+    mutationFn: ({ teamId, active }: { teamId: string; active: boolean }) =>
+      teamsApi.setActive(teamId, active),
     onSuccess: () => {
       invalidate();
-      setDeleteTarget(null);
+      setActiveTarget(null);
     },
   });
   const regenerateMutation = useMutation({
@@ -116,7 +117,7 @@ export function AdminTeamsPage() {
       )}
       {isError && <ApiErrorAlert error={error} />}
       {updateMutation.isError && <Box sx={{ mb: 2 }}><ApiErrorAlert error={updateMutation.error} /></Box>}
-      {removeMutation.isError && <Box sx={{ mb: 2 }}><ApiErrorAlert error={removeMutation.error} /></Box>}
+      {activeMutation.isError && <Box sx={{ mb: 2 }}><ApiErrorAlert error={activeMutation.error} /></Box>}
       {purgeMutation.isError && <Box sx={{ mb: 2 }}><ApiErrorAlert error={purgeMutation.error} /></Box>}
       {regenerateMutation.isError && <Box sx={{ mb: 2 }}><ApiErrorAlert error={regenerateMutation.error} /></Box>}
 
@@ -217,10 +218,10 @@ export function AdminTeamsPage() {
                         size="small"
                         color="inherit"
                         variant="outlined"
-                        disabled={!team.active}
-                        onClick={() => setDeleteTarget(team)}
+                        disabled={activeMutation.isPending}
+                        onClick={() => setActiveTarget(team)}
                       >
-                        無効化
+                        {team.active ? "無効化" : "有効化"}
                       </Button>
                       <Button
                         size="small"
@@ -258,18 +259,22 @@ export function AdminTeamsPage() {
       />
 
       <ConfirmDialog
-        open={deleteTarget !== null}
-        title="チームを無効化しますか？"
+        open={activeTarget !== null}
+        title={activeTarget?.active ? "チームを無効化しますか？" : "チームを有効化しますか？"}
         description={
-          deleteTarget
-            ? `チーム「${deleteTarget.teamName}」を無効化します。\n\nこのチームではログインできなくなりますが、回答記録と順位は残ります。\n順位からも消したい場合は「完全削除」を使ってください。`
+          activeTarget?.active
+            ? `チーム「${activeTarget.teamName}」を無効化します。\n\nこのチームではログインできなくなりますが、回答記録と順位は残ります。\n順位からも消したい場合は「完全削除」を使ってください。`
+            : activeTarget
+              ? `チーム「${activeTarget.teamName}」を有効化します。\n\nこのチームの共有ログインコードが再び使えるようになります。回答記録と順位はそのまま引き継がれます。`
             : undefined
         }
-        confirmLabel="無効化する"
-        danger
-        loading={removeMutation.isPending}
-        onCancel={() => setDeleteTarget(null)}
-        onConfirm={() => deleteTarget && removeMutation.mutate(deleteTarget.teamId)}
+        confirmLabel={activeTarget?.active ? "無効化する" : "有効化する"}
+        danger={activeTarget?.active === true}
+        loading={activeMutation.isPending}
+        onCancel={() => setActiveTarget(null)}
+        onConfirm={() =>
+          activeTarget && activeMutation.mutate({ teamId: activeTarget.teamId, active: !activeTarget.active })
+        }
       />
 
       <ConfirmDialog

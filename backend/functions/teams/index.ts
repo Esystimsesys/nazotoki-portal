@@ -4,6 +4,7 @@
  * - GET    /api/admin/teams                         チーム一覧（admin）
  * - POST   /api/admin/teams                         チーム新規登録（admin）。loginCodeはサーバー自動生成
  * - PUT    /api/admin/teams/{teamId}                チーム名・メモの更新（admin）
+ * - PUT    /api/admin/teams/{teamId}/active         有効・無効の切替（admin）
  * - DELETE /api/admin/teams/{teamId}                論理削除（active=false、admin）
  * - DELETE /api/admin/teams/{teamId}/purge          完全削除（回答記録ごと物理削除、admin）
  * - POST   /api/admin/teams/{teamId}/regenerate-code ログインコード再発行（admin）
@@ -185,7 +186,7 @@ async function createTeam(event: ApiEvent): Promise<ApiResult> {
  * PUT /api/admin/teams/{teamId}（チーム名・メモの更新）
  *
  * 編集できるのはこの2つだけ。loginCode は再発行エンドポイント、active は
- * 無効化エンドポイントと役割が分かれているため、ここでは触らない。
+ * 有効・無効切替エンドポイントと役割が分かれているため、ここでは触らない。
  *
  * チーム名はどのテーブルにも非正規化していない（ランキング等は毎回 teams
  * テーブルから引く）ので、ここを更新すれば集計画面の表示もそのまま追従する。
@@ -245,6 +246,32 @@ async function deleteTeam(teamId: string): Promise<ApiResult> {
     });
   if (!res) return err(404, "チームが見つかりません");
   return ok({ ok: true });
+}
+
+/** PUT /api/admin/teams/{teamId}/active（有効・無効の切替） */
+async function setTeamActive(event: ApiEvent, teamId: string): Promise<ApiResult> {
+  const body = getJsonBody(event);
+  if (typeof body?.active !== "boolean") {
+    return err(400, "active は真偽値で指定してください");
+  }
+
+  const res = await ddb()
+    .send(
+      new UpdateCommand({
+        TableName: requiredEnv("TABLE_TEAMS"),
+        Key: { pk: `TEAM#${teamId}` },
+        UpdateExpression: "SET active = :active",
+        ConditionExpression: "attribute_exists(pk)",
+        ExpressionAttributeValues: { ":active": body.active },
+        ReturnValues: "ALL_NEW",
+      }),
+    )
+    .catch((e) => {
+      if (e?.name === "ConditionalCheckFailedException") return null;
+      throw e;
+    });
+  if (!res) return err(404, "チームが見つかりません");
+  return ok({ team: toTeam(res.Attributes as TeamItem) });
 }
 
 /**
@@ -327,6 +354,12 @@ export const handler = async (event: ApiEvent): Promise<ApiResult> =>
     if (method === "POST" && regenerateMatch) {
       requireAuth(event, "admin");
       return regenerateCode(decodeURIComponent(regenerateMatch[1]));
+    }
+
+    const activeMatch = path.match(/^\/api\/admin\/teams\/([^/]+)\/active$/);
+    if (method === "PUT" && activeMatch) {
+      requireAuth(event, "admin");
+      return setTeamActive(event, decodeURIComponent(activeMatch[1]));
     }
 
     // /purge は {teamId} 単体の正規表現より先に判定する

@@ -55,8 +55,8 @@
 | 関数（物理名） | 担当ルート | 環境変数 |
 | --- | --- | --- |
 | `nazotoki-admin-auth` | `POST /api/admin/login` | `TABLE_ADMINS`, `JWT_SECRET` |
-| `nazotoki-teams` | `POST /api/auth/team-login`、`GET/POST /api/admin/teams`、`PUT /api/admin/teams/{teamId}`、`DELETE /api/admin/teams/{teamId}`、`DELETE /api/admin/teams/{teamId}/purge`、`POST /api/admin/teams/{teamId}/regenerate-code` | `TABLE_TEAMS`, `TABLE_SUBMISSIONS`, `JWT_SECRET` |
-| `nazotoki-problems` | `GET/POST /api/admin/problems`、`PUT/DELETE /api/admin/problems/{problemId}`、`PUT /api/admin/problems/{problemId}/enabled`、`PUT /api/admin/problems/enabled`（一括）、`POST /api/admin/problems/csv`、`GET /api/event`、`PUT /api/admin/event` | `TABLE_PROBLEMS`, `JWT_SECRET` |
+| `nazotoki-teams` | `POST /api/auth/team-login`、`GET/POST /api/admin/teams`、`PUT /api/admin/teams/{teamId}`、`PUT /api/admin/teams/{teamId}/active`、`DELETE /api/admin/teams/{teamId}`、`DELETE /api/admin/teams/{teamId}/purge`、`POST /api/admin/teams/{teamId}/regenerate-code` | `TABLE_TEAMS`, `TABLE_SUBMISSIONS`, `JWT_SECRET` |
+| `nazotoki-problems` | `GET/POST /api/admin/problems`、`PUT/DELETE /api/admin/problems/{problemId}`、`PUT /api/admin/problems/{problemId}/enabled`、`PUT /api/admin/problems/enabled`（一括）、`POST /api/admin/problems/csv`、`GET /api/event`、`PUT /api/admin/event`、`POST /api/admin/event/reset` | `TABLE_PROBLEMS`, `JWT_SECRET` |
 | `nazotoki-submissions` | `POST /api/submissions`、`DELETE /api/admin/submissions`、`GET /api/admin/summary`、`GET /api/admin/timeline`、`GET /api/admin/analysis`、`GET /api/admin/teams/{teamId}/submissions` | `TABLE_SUBMISSIONS`, `TABLE_PROBLEMS`, `TABLE_TEAMS`, `JWT_SECRET` |
 
 共通ロジックは `backend/shared/` に集約:
@@ -97,12 +97,16 @@
 **PUT /api/admin/teams/{teamId}**（チーム名・メモの更新）
 - req: `{ "teamName": string, "note"?: string }`
 - res 200: `{ "team": Team }`。存在しないteamIdは404、`teamName` が空なら400。
-- 編集できるのはこの2つだけ。`loginCode` は `/regenerate-code`、`active` は `DELETE {teamId}` と役割が分かれているため、ここでは変更しない。
+- 編集できるのはこの2つだけ。`loginCode` は `/regenerate-code`、`active` は `PUT {teamId}/active` と役割が分かれているため、ここでは変更しない。
 - `note` は trim 後が空文字（または未指定・`null`）なら属性ごと削除する。上限1000文字を超えたら400。
 - チーム名はどのテーブルにも非正規化していない（ランキング・分析・タイムラインは毎回 `nazotoki-teams` から引く）ため、更新すれば集計画面の表示もそのまま追従する。ただし参加者が持っている team JWT には発行時のチーム名が入っているので、参加者画面の表示は再ログインするまで旧名のまま。
 
+**PUT /api/admin/teams/{teamId}/active** → req: `{ "active": boolean }` / res 200: `{ "team": Team }`
+- `active=true` で再有効化し、同じ共有ログインコードで再びログインできる。回答記録と順位は維持する。
+- `active=false` で無効化する。
+
 **DELETE /api/admin/teams/{teamId}** → res 200: `{ "ok": true }`
-- 論理削除（`active=false`）。回答記録は残す。
+- 後方互換用の論理削除（`active=false`）。回答記録は残す。
 
 **POST /api/admin/teams/{teamId}/regenerate-code** → res 200: `{ "team": Team }`（新 `loginCode`）
 
@@ -158,6 +162,11 @@
 - res 200: `{ "event": EventState }`
 - `startedAt` / `endedAt` は切り替えた側だけを更新し、もう一方は直前の値を残す（終了後も「何時に開始したか」を画面に出せるようにするため）。
 - 既定は **未開始（`running: false`）**。開始は管理者の明示的な操作であるべきで、デプロイ直後に受付が開いている方が事故（開始前のフライング回答）につながるため。
+
+**POST /api/admin/event/reset**（admin）
+- res 200: `{ "event": { "running": false, "startedAt": null, "endedAt": null } }`
+- 終了したイベントを未開始状態に戻す。問題・チーム・回答記録は変更しない。
+- 開催中は409。先にイベントを終了してから実行する。
 
 ### 回答（team）
 

@@ -17,6 +17,13 @@ const putEvent = (teamId: string, body: unknown) => ({
   requestContext: { http: { method: "PUT", path: `/api/admin/teams/${teamId}` } },
 });
 
+/** PUT /api/admin/teams/{teamId}/active のイベント */
+const activeEvent = (teamId: string, body: unknown) => ({
+  rawPath: `/api/admin/teams/${teamId}/active`,
+  body: JSON.stringify(body),
+  requestContext: { http: { method: "PUT", path: `/api/admin/teams/${teamId}/active` } },
+});
+
 /** 更新されたアイテム。存在しないteamIdは条件チェック失敗として扱う */
 let stored: Record<string, unknown> | null;
 let updateInputs: UpdateCommand["input"][];
@@ -32,9 +39,14 @@ beforeEach(() => {
         throw Object.assign(new Error("not found"), { name: "ConditionalCheckFailedException" });
       }
       const values = command.input.ExpressionAttributeValues!;
-      const next: Record<string, unknown> = { ...stored, teamName: values[":teamName"] };
-      if (command.input.UpdateExpression?.includes("REMOVE note")) delete next.note;
-      else next.note = values[":note"];
+      const next: Record<string, unknown> = { ...stored };
+      if (command.input.UpdateExpression === "SET active = :active") {
+        next.active = values[":active"];
+      } else {
+        next.teamName = values[":teamName"];
+        if (command.input.UpdateExpression?.includes("REMOVE note")) delete next.note;
+        else next.note = values[":note"];
+      }
       return { Attributes: next };
     }
     throw new Error("Unexpected command");
@@ -104,6 +116,43 @@ describe("PUT /api/admin/teams/{teamId}", () => {
     stored = null;
 
     const res = await handler(putEvent("missing", { teamName: "新チーム名" }) as never);
+
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("PUT /api/admin/teams/{teamId}/active", () => {
+  it.each([
+    ["再有効化", true],
+    ["無効化", false],
+  ])("チームを%sして更新後のチームを返す", async (_label, active) => {
+    const res = await handler(activeEvent("team-1", { active }) as never);
+
+    expect(res.statusCode).toBe(200);
+    expect(updateInputs[0]).toMatchObject({
+      UpdateExpression: "SET active = :active",
+      ConditionExpression: "attribute_exists(pk)",
+      ExpressionAttributeValues: { ":active": active },
+      ReturnValues: "ALL_NEW",
+    });
+    expect(JSON.parse(res.body!).team.active).toBe(active);
+  });
+
+  it.each([
+    ["未指定", {}],
+    ["文字列", { active: "true" }],
+    ["数値", { active: 1 }],
+  ])("activeが%sなら400を返し、DBへ書き込まない", async (_label, body) => {
+    const res = await handler(activeEvent("team-1", body) as never);
+
+    expect(res.statusCode).toBe(400);
+    expect(updateInputs).toHaveLength(0);
+  });
+
+  it("存在しないteamIdなら404を返す", async () => {
+    stored = null;
+
+    const res = await handler(activeEvent("missing", { active: true }) as never);
 
     expect(res.statusCode).toBe(404);
   });

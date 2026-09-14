@@ -23,6 +23,7 @@ export const EVENT_QUERY_KEY = ["admin", "event"];
 export function EventControl() {
   const queryClient = useQueryClient();
   const [confirmTarget, setConfirmTarget] = useState<boolean | null>(null);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   // 閉じるアニメーションの間もダイアログは描画され続けるため、confirmTarget を
   // そのまま文言に使うと null に戻した瞬間に「開始しますか？」→「終了しますか？」と
   // 反転して見える。直前の指示を別に覚えておき、文言はそちらから引く。
@@ -49,6 +50,15 @@ export function EventControl() {
       // 大画面表示・ダッシュボードは summary 側に載る event を見ているので合わせて更新する
       queryClient.invalidateQueries({ queryKey: ["admin", "summary"] });
       setConfirmTarget(null);
+    },
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: () => eventApi.reset(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: EVENT_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: ["admin", "summary"] });
+      setResetConfirmOpen(false);
     },
   });
 
@@ -93,24 +103,40 @@ export function EventControl() {
             )}
           </Box>
         </Box>
-        <Button
-          size="small"
-          variant={stateKnown && running ? "outlined" : "contained"}
-          color={stateKnown && running ? "inherit" : "primary"}
-          disabled={!stateKnown || mutation.isPending}
-          onClick={() => openConfirm(!running)}
-          sx={
-            running
-              ? undefined
-              : {
-                  color: "#1a0f2e",
-                  background: "linear-gradient(135deg, #ffe08a, #f4c542)",
-                  "&:hover": { background: "linear-gradient(135deg, #ffe08a, #f4c542)" },
-                }
-          }
-        >
-          {!stateKnown ? "状態不明" : running ? "■ 終了" : finished ? "▶ 再開" : "▶ 開始"}
-        </Button>
+        <Box sx={{ display: "flex", gap: 0.75 }}>
+          <Button
+            size="small"
+            variant={stateKnown && running ? "outlined" : "contained"}
+            color={stateKnown && running ? "inherit" : "primary"}
+            disabled={!stateKnown || mutation.isPending || resetMutation.isPending}
+            onClick={() => openConfirm(!running)}
+            sx={
+              running
+                ? undefined
+                : {
+                    color: "#1a0f2e",
+                    background: "linear-gradient(135deg, #ffe08a, #f4c542)",
+                    "&:hover": { background: "linear-gradient(135deg, #ffe08a, #f4c542)" },
+                  }
+            }
+          >
+            {!stateKnown ? "状態不明" : running ? "■ 終了" : finished ? "▶ 再開" : "▶ 開始"}
+          </Button>
+          {finished && (
+            <Button
+              size="small"
+              color="inherit"
+              variant="outlined"
+              disabled={mutation.isPending || resetMutation.isPending}
+              onClick={() => {
+                resetMutation.reset();
+                setResetConfirmOpen(true);
+              }}
+            >
+              ↺ リセット
+            </Button>
+          )}
+        </Box>
       </Box>
 
       <ConfirmDialog
@@ -130,6 +156,18 @@ export function EventControl() {
       >
         {isError && <Box sx={{ mt: 2 }}><ApiErrorAlert error={error} /></Box>}
         {mutation.isError && <Box sx={{ mt: 2 }}><ApiErrorAlert error={mutation.error} /></Box>}
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={resetConfirmOpen}
+        title="イベントを開始前に戻しますか？"
+        description={"開始・終了時刻をリセットし、次の操作を「開始」に戻します。\n\nチーム・問題・回答記録は削除されません。テスト回答も消す場合は、ダッシュボードの「全回答をクリア」を実行してください。"}
+        confirmLabel="リセットする"
+        loading={resetMutation.isPending}
+        onCancel={() => setResetConfirmOpen(false)}
+        onConfirm={() => resetMutation.mutate()}
+      >
+        {resetMutation.isError && <Box sx={{ mt: 2 }}><ApiErrorAlert error={resetMutation.error} /></Box>}
       </ConfirmDialog>
     </Box>
   );

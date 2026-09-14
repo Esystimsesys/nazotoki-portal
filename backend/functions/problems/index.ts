@@ -9,6 +9,7 @@
  * - POST   /api/admin/problems/csv             CSV一括取込
  * - GET    /api/event                          イベント開始/終了状態の取得（team/admin共通）
  * - PUT    /api/admin/event                    イベントの開始/終了切替
+ * - POST   /api/admin/event/reset              イベントを未開始状態に戻す
  *
  * Problemsテーブルは「問題メタ行(sk=META)＋パターン行(sk=PATTERN#<patternId>)」の単一テーブル構成。
  * データ量が小さいためScanで全件取得する。
@@ -25,7 +26,7 @@ import {
 } from "../../shared/answer-matching";
 import { ddb, requiredEnv, scanAll } from "../../shared/dynamo";
 import { batchWrite, type BatchWriteRequest } from "../../shared/batch-write";
-import { getEventState, setEventRunning } from "../../shared/event-state";
+import { getEventState, resetEventState, setEventRunning } from "../../shared/event-state";
 import { AUTO_CODE_KEYWORDS, generateUnusedCode } from "../../shared/random-code";
 import {
   err,
@@ -370,6 +371,13 @@ async function putEvent(event: ApiEvent): Promise<ApiResult> {
   return ok({ event: await setEventRunning(running) });
 }
 
+/** POST /api/admin/event/reset（開始・終了時刻を消して未開始状態に戻す） */
+async function resetEvent(): Promise<ApiResult> {
+  const current = await getEventState();
+  if (current.running) return err(409, "開催中のイベントはリセットできません。先に終了してください");
+  return ok({ event: await resetEventState() });
+}
+
 interface CsvRow {
   問題名?: string;
   コード?: string;
@@ -587,6 +595,7 @@ export const handler = async (event: ApiEvent): Promise<ApiResult> =>
     requireAuth(event, "admin");
 
     if (method === "PUT" && path === "/api/admin/event") return putEvent(event);
+    if (method === "POST" && path === "/api/admin/event/reset") return resetEvent();
 
     if (method === "GET" && path === "/api/admin/problems") return listProblems();
     if (method === "POST" && path === "/api/admin/problems") return createProblem(event);

@@ -452,6 +452,13 @@ Resources:
       RouteKey: "DELETE /api/admin/teams/{teamId}"
       AuthorizationType: NONE
       Target: !Sub integrations/${teamsIntegration}
+  routeAdminTeamsActive:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "PUT /api/admin/teams/{teamId}/active"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${teamsIntegration}
   routeAdminTeamsRegenerateCode:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -530,6 +537,13 @@ Resources:
     Properties:
       ApiId: !Ref httpApi
       RouteKey: "PUT /api/admin/event"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${problemsIntegration}
+  routeAdminEventReset:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref httpApi
+      RouteKey: "POST /api/admin/event/reset"
       AuthorizationType: NONE
       Target: !Sub integrations/${problemsIntegration}
 
