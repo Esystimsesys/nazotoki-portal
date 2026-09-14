@@ -1,4 +1,5 @@
 import type { Problem, ProblemStat, RankingEntry } from "../api/types";
+import { withPrizeRanks } from "./sort";
 
 /** CSVの1セルをエスケープする（カンマ・引用符・改行を含む場合は引用符で囲む） */
 function cell(value: string | number | undefined | null): string {
@@ -37,15 +38,15 @@ export function problemsToCsv(problems: Problem[]): string {
  * イベント終了後に結果を残すための出力（画面のスクリーンショット以外の記録手段）。
  * 賞金は符号つきの生の整数で出す。画面表示は「+¥1,500」のように整形しているが、
  * CSVは表計算ソフトで並べ替え・集計されることを前提に数値のまま置く。
- * 順位は画面と同じ「合計賞金の降順」で、同額なら同順位にはせず通し番号にする
- * （集計元の ranking が既にソート済みなので、その並びをそのまま番号にする）。
+ * 順位は画面と同じ「合計賞金の降順」で、同額なら同順位にする。
+ * 同点の次は人数分だけ順位を飛ばす（1位・1位・3位）。
  */
 export function rankingToCsv(ranking: RankingEntry[]): string {
   const rows = [["順位", "チーム名", "正解数", "不正解数", "合計賞金"].join(",")];
-  ranking.forEach((r, i) => {
+  withPrizeRanks(ranking).forEach(({ row: r, rank }) => {
     rows.push(
       [
-        cell(i + 1),
+        cell(rank),
         cell(r.teamName),
         cell(r.correctCount),
         cell(r.incorrectCount),

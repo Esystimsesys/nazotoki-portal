@@ -21,7 +21,7 @@ import { ProblemReachPanel, WrongAnswerPanel } from "./AnalysisPanels";
 import { formatPrize, prizeColor } from "../../shared/format";
 import { downloadCsv, problemStatsToCsv, rankingToCsv, timestampedFilename } from "../../shared/csv";
 import { TeamHistoryModal } from "./TeamHistoryModal";
-import { compareTeamNames } from "../../shared/sort";
+import { compareTeamNames, withPrizeRanks } from "../../shared/sort";
 
 const MEDALS = ["🥇", "🥈", "🥉"];
 
@@ -79,9 +79,9 @@ export function AdminDashboardPage() {
 
   // APIのrankingは合計賞金順。この順番から実順位を確定してから、画面では
   // チームを探しやすい名前順に並べる（順位番号・CSVの賞金順は変えない）。
-  const teamsByName = (data?.ranking ?? [])
-    .map((row, index) => ({ row, rank: index + 1 }))
-    .sort((a, b) => compareTeamNames(a.row, b.row));
+  const teamsByName = withPrizeRanks(data?.ranking ?? []).sort((a, b) =>
+    compareTeamNames(a.row, b.row),
+  );
 
   return (
     <Box>
