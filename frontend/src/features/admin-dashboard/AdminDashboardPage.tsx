@@ -19,7 +19,7 @@ import { NeonPanel } from "../../shared/components/NeonPanel";
 import { TimelineChart } from "../../shared/components/TimelineChart";
 import { ProblemReachPanel, WrongAnswerPanel } from "./AnalysisPanels";
 import { formatPrize, prizeColor } from "../../shared/format";
-import { downloadCsv, problemStatsToCsv, rankingToCsv, timestampedFilename } from "../../shared/csv";
+import { downloadResultReport } from "../../shared/resultReport";
 import { TeamHistoryModal } from "./TeamHistoryModal";
 import { compareTeamNames, withPrizeRanks } from "../../shared/sort";
 
@@ -67,6 +67,12 @@ export function AdminDashboardPage() {
   });
 
   const queryClient = useQueryClient();
+  const reportMutation = useMutation({
+    mutationFn: async () => {
+      const report = await submissionsApi.report();
+      await downloadResultReport(report);
+    },
+  });
   const clearMutation = useMutation({
     mutationFn: () => submissionsApi.clearAll(),
     onSuccess: () => {
@@ -78,7 +84,7 @@ export function AdminDashboardPage() {
   });
 
   // APIのrankingは合計賞金順。この順番から実順位を確定してから、画面では
-  // チームを探しやすい名前順に並べる（順位番号・CSVの賞金順は変えない）。
+  // チームを探しやすい名前順に並べる（順位番号・レポートの賞金順は変えない）。
   const teamsByName = withPrizeRanks(data?.ranking ?? []).sort((a, b) =>
     compareTeamNames(a.row, b.row),
   );
@@ -87,36 +93,18 @@ export function AdminDashboardPage() {
     <Box>
       <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap" }}>
         <Typography sx={{ fontSize: 16, fontWeight: 800, mb: 0.5 }}>大会ダッシュボード</Typography>
-        {/* イベント後に結果を残す手段（画面のスクリーンショット以外）。
-            表示中のsummaryをそのまま書き出すので、追加のAPI呼び出しは発生しない。 */}
+        {/* 順位・問題×チーム・問題別集計・回答履歴を、1つのExcelへまとめて保存する。 */}
         <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
           <Button
             size="small"
             color="inherit"
             variant="outlined"
-            disabled={!data || data.ranking.length === 0}
-            onClick={() =>
-              data && downloadCsv(timestampedFilename("nazotoki-ranking"), rankingToCsv(data.ranking))
-            }
+            disabled={!data || reportMutation.isPending}
+            onClick={() => reportMutation.mutate()}
           >
-            ⬇ 順位CSV
+            {reportMutation.isPending ? "レポート作成中…" : "⬇ 結果レポート（Excel）"}
           </Button>
-          <Button
-            size="small"
-            color="inherit"
-            variant="outlined"
-            disabled={!data || data.problemStats.length === 0}
-            onClick={() =>
-              data &&
-              downloadCsv(
-                timestampedFilename("nazotoki-problem-stats"),
-                problemStatsToCsv(data.problemStats),
-              )
-            }
-          >
-            ⬇ 問題別CSV
-          </Button>
-          {/* 消す前にCSVで結果を残せるよう、出力ボタンの隣に置く */}
+          {/* 消す前に結果レポートを残せるよう、出力ボタンの隣に置く */}
           <Button
             size="small"
             color="error"
@@ -128,6 +116,11 @@ export function AdminDashboardPage() {
           </Button>
         </Box>
       </Box>
+      {reportMutation.isError && (
+        <Box sx={{ mb: 2 }}>
+          <ApiErrorAlert error={reportMutation.error} />
+        </Box>
+      )}
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2.25, flexWrap: "wrap" }}>
         <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
           チームごとの正誤サマリ・合計賞金・ランキングをリアルタイムに確認できます。
@@ -307,7 +300,7 @@ export function AdminDashboardPage() {
         title="すべての回答記録を削除しますか？"
         description={
           data
-            ? `${data.stats.submissionCount}件の回答記録をすべて削除します。\n\n順位と賞金はすべて0に戻り、元に戻すことはできません。\nチームと問題は削除されません。\n\n結果を残す場合は、先に「順位CSV」「問題別CSV」を出力してください。`
+            ? `${data.stats.submissionCount}件の回答記録をすべて削除します。\n\n順位と賞金はすべて0に戻り、元に戻すことはできません。\nチームと問題は削除されません。\n\n結果を残す場合は、先に「結果レポート（Excel）」を出力してください。`
             : undefined
         }
         confirmLabel="すべて削除する"

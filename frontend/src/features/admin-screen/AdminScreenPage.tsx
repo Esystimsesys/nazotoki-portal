@@ -15,13 +15,16 @@ const MEDALS = ["🥇", "🥈", "🥉"];
 
 /**
  * チームへのプロジェクター投影・画面共有を想定した大画面表示。
- * 管理操作は一切持たず、途中経過の閲覧に振り切っている（操作ボタンが映り込むと事故のもとになるため）。
+ * 投影内容に影響する操作は結果の表示/非表示だけに絞る。
  * Fullscreen APIはこのBox（ref先）だけを対象にするので、AdminShellのヘッダー/タブは
  * 兄弟要素として全画面表示の外に残り、共有時に映り込まない。
  */
 export function AdminScreenPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // 投影を始めた時点では順位を伏せておき、司会者の操作で結果を発表する。
+  // 全画面表示に切り替えても同じコンポーネント内なので状態は維持される。
+  const [isResultVisible, setIsResultVisible] = useState(false);
 
   const { data, isLoading, isError, error, dataUpdatedAt, isFetching } = useQuery({
     queryKey: ["admin", "summary"],
@@ -128,9 +131,30 @@ export function AdminScreenPage() {
             </Typography>
           </Box>
         )}
-        <Button size={isFullscreen ? "medium" : "small"} variant="outlined" color="inherit" onClick={toggleFullscreen}>
-          {isFullscreen ? "全画面を終了" : "⛶ 全画面表示"}
-        </Button>
+        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <Button
+            size={isFullscreen ? "medium" : "small"}
+            variant={isResultVisible ? "outlined" : "contained"}
+            color={isResultVisible ? "inherit" : "primary"}
+            aria-pressed={isResultVisible}
+            disabled={!data}
+            onClick={() => setIsResultVisible((visible) => !visible)}
+            sx={
+              isResultVisible
+                ? undefined
+                : {
+                    color: "#1a0f2e",
+                    background: "linear-gradient(135deg, #ffe08a, #f4c542)",
+                    "&:hover": { background: "linear-gradient(135deg, #ffe08a, #f4c542)" },
+                  }
+            }
+          >
+            {isResultVisible ? "結果を隠す" : "🏆 結果を表示"}
+          </Button>
+          <Button size={isFullscreen ? "medium" : "small"} variant="outlined" color="inherit" onClick={toggleFullscreen}>
+            {isFullscreen ? "全画面を終了" : "⛶ 全画面表示"}
+          </Button>
+        </Box>
       </Box>
 
       {isLoading && (
@@ -144,7 +168,34 @@ export function AdminScreenPage() {
         </Box>
       )}
 
-      {data && (
+      {data && !isResultVisible && (
+        <NeonPanel
+          sx={{
+            position: "relative",
+            zIndex: 1,
+            minHeight: isFullscreen ? "55vh" : 240,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            textAlign: "center",
+            p: 4,
+          }}
+        >
+          <Typography
+            className="brand-font"
+            sx={{
+              fontSize: isFullscreen ? { xs: 28, sm: 42 } : { xs: 20, sm: 26 },
+              fontWeight: 900,
+              color: neon.goldSoft,
+              textShadow: `0 0 18px ${neon.borderGlow}`,
+            }}
+          >
+            結果発表をお待ちください
+          </Typography>
+        </NeonPanel>
+      )}
+
+      {data && isResultVisible && (
         <Box sx={{ position: "relative", zIndex: 1 }}>
           <Typography sx={{ fontSize: isFullscreen ? 22 : 14, fontWeight: 800, mb: isFullscreen ? 1.5 : 1 }}>
             賞金ランキング

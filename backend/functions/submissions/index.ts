@@ -2,6 +2,7 @@
  * nazotoki-submissions
  * - POST /api/submissions                        回答受付・判定（team）
  * - GET  /api/admin/summary                       集計（ランキング・問題別正誤・全体統計）（admin）
+ * - GET  /api/admin/report                        結果レポート用の全データ（admin）
  * - GET  /api/admin/teams/{teamId}/submissions     チーム別回答履歴（admin）
  * - DELETE /api/admin/submissions                  全回答記録の削除（admin）
  * - GET  /api/admin/timeline                       賞金推移の時系列（admin）
@@ -52,6 +53,7 @@ interface TeamItem {
   loginCode: string;
   active: boolean;
   createdAt: string;
+  note?: string;
 }
 
 /** Problemsテーブルを全件Scanし、有効な問題(META)と全パターン(PATTERN)に分けて返す */
@@ -475,6 +477,164 @@ async function analysis(): Promise<ApiResult> {
   return ok({ teams, problems: problemRows, wrongAnswerProblems });
 }
 
+/**
+ * GET /api/admin/report（admin）
+ *
+ * 結果を消す前に大会の全体像を1ファイルへ残すためのデータを返す。
+ * summary / analysis / チーム別履歴を画面から順番に取得すると、チーム数ぶんの
+ * リクエストが増えるうえ取得時刻もずれるため、ここで各テーブルを1回ずつ読み、
+ * ランキング・問題×チーム・問題別集計・回答履歴の共通スナップショットを作る。
+ *
+ * 未登録コードも回答履歴へ含める。通常のチーム詳細では運用上のノイズとして
+ * 省いているが、削除後に復元できない元データなので最終レポートでは落とさない。
+ */
+async function report(): Promise<ApiResult> {
+  const [teamsRaw, { problems, patterns }, submissionsRaw, eventState] = await Promise.all([
+    scanAll(requiredEnv("TABLE_TEAMS")),
+    loadAllProblemsWithPatterns(),
+    scanAll(requiredEnv("TABLE_SUBMISSIONS")),
+    getEventState(),
+  ]);
+  const teams = teamsRaw as unknown as TeamItem[];
+  const submissions = submissionsRaw as unknown as SubmissionItem[];
+  const sortedProblems = [...problems].sort(compareProblemsForDisplay);
+
+  const submissionsByTeam = new Map<string, SubmissionItem[]>();
+  const submissionsByProblem = new Map<string, SubmissionItem[]>();
+  for (const submission of submissions) {
+    const teamList = submissionsByTeam.get(submission.teamId) ?? [];
+    teamList.push(submission);
+    submissionsByTeam.set(submission.teamId, teamList);
+
+    if (submission.problemId) {
+      const problemList = submissionsByProblem.get(submission.problemId) ?? [];
+      problemList.push(submission);
+      submissionsByProblem.set(submission.problemId, problemList);
+    }
+  }
+
+  const reportTeams = teams.map((team) => {
+    const list = submissionsByTeam.get(team.teamId) ?? [];
+    const registered = list.filter((submission) => submission.problemId !== null);
+    return {
+      teamId: team.teamId,
+      teamName: team.teamName,
+      active: team.active,
+      note: team.note,
+      correctCount: list.filter((submission) => submission.isCorrect).length,
+      incorrectCount: list.filter((submission) => !submission.isCorrect).length,
+      solvedProblemCount: new Set(
+        registered
+          .filter((submission) => submission.isCorrect)
+          .map((submission) => submission.problemId as string),
+      ).size,
+      wrongProblemCount: new Set(
+        registered
+          .filter((submission) => !submission.isCorrect)
+          .map((submission) => submission.problemId as string),
+      ).size,
+      unregisteredCount: list.filter((submission) => submission.problemId === null).length,
+      gainedPrize: list.reduce((sum, submission) => sum + Math.max(submission.prizeAwarded, 0), 0),
+      lostPrize: list.reduce((sum, submission) => sum + Math.min(submission.prizeAwarded, 0), 0),
+      totalPrize: list.reduce((sum, submission) => sum + submission.prizeAwarded, 0),
+    };
+  });
+
+  const ranking = reportTeams
+    .map(({ teamId, teamName, correctCount, incorrectCount, totalPrize }) => ({
+      teamId,
+      teamName,
+      correctCount,
+      incorrectCount,
+      totalPrize,
+    }))
+    .sort((a, b) => b.totalPrize - a.totalPrize);
+
+  const wrongChoiceCountByProblem = new Map<string, number>();
+  const maxPrizeByProblem = new Map<string, number>();
+  for (const pattern of patterns) {
+    if (pattern.isCorrect) {
+      const current = maxPrizeByProblem.get(pattern.problemId) ?? Number.NEGATIVE_INFINITY;
+      maxPrizeByProblem.set(pattern.problemId, Math.max(current, pattern.prize));
+    } else {
+      wrongChoiceCountByProblem.set(
+        pattern.problemId,
+        (wrongChoiceCountByProblem.get(pattern.problemId) ?? 0) + 1,
+      );
+    }
+  }
+
+  const reportProblems = sortedProblems.map((problem) => {
+    const list = submissionsByProblem.get(problem.problemId) ?? [];
+    const correct = list.filter((submission) => submission.isCorrect);
+    const incorrect = list.filter((submission) => !submission.isCorrect);
+    return {
+      problemId: problem.problemId,
+      label: problem.label,
+      enabled: problem.enabled,
+      correctCount: correct.length,
+      incorrectCount: incorrect.length,
+      solvedTeamCount: new Set(correct.map((submission) => submission.teamId)).size,
+      wrongTeamCount: new Set(incorrect.map((submission) => submission.teamId)).size,
+      wrongChoiceCount: wrongChoiceCountByProblem.get(problem.problemId) ?? 0,
+      awardedPrize: list.reduce((sum, submission) => sum + submission.prizeAwarded, 0),
+      totalPenalty: incorrect.reduce((sum, submission) => sum + submission.prizeAwarded, 0),
+    };
+  });
+
+  const teamNameById = new Map(teams.map((team) => [team.teamId, team.teamName]));
+  const problemLabelById = new Map(problems.map((problem) => [problem.problemId, problem.label]));
+  const patternById = new Map(patterns.map((pattern) => [pattern.patternId, pattern]));
+  const reportSubmissions = [...submissions]
+    .sort((a, b) => a.submittedAt.localeCompare(b.submittedAt))
+    .map((submission) => {
+      const pattern = submission.patternId ? patternById.get(submission.patternId) : undefined;
+      return {
+        teamId: submission.teamId,
+        teamName: teamNameById.get(submission.teamId) ?? submission.teamId,
+        code: submission.code,
+        problemId: submission.problemId,
+        problemLabel: submission.problemId
+          ? (problemLabelById.get(submission.problemId) ?? submission.problemId)
+          : null,
+        patternId: submission.patternId,
+        registered: submission.problemId !== null,
+        isCorrect: submission.isCorrect,
+        patternPrize: pattern?.prize ?? null,
+        prizeAwarded: submission.prizeAwarded,
+        patternNote: pattern?.note,
+        submittedAt: submission.submittedAt,
+      };
+    });
+
+  const maxPrize = [...maxPrizeByProblem.values()]
+    .filter((value) => Number.isFinite(value))
+    .reduce((sum, value) => sum + value, 0);
+  const registeredSubmissions = submissions.filter((submission) => submission.problemId !== null);
+
+  return ok({
+    generatedAt: new Date().toISOString(),
+    event: eventState,
+    stats: {
+      teamCount: teams.length,
+      activeTeamCount: teams.filter((team) => team.active).length,
+      answeredTeamCount: submissionsByTeam.size,
+      submissionCount: submissions.length,
+      registeredSubmissionCount: registeredSubmissions.length,
+      unregisteredSubmissionCount: submissions.length - registeredSubmissions.length,
+      enabledProblemCount: problems.filter((problem) => problem.enabled).length,
+      totalProblemCount: problems.length,
+      solvedProblemCount: reportProblems.filter((problem) => problem.solvedTeamCount > 0).length,
+      maxPrize,
+      awardedPrize: submissions.reduce((sum, submission) => sum + submission.prizeAwarded, 0),
+    },
+    ranking,
+    teams: reportTeams,
+    problems: reportProblems,
+    submissions: reportSubmissions,
+  });
+}
+
 /** GET /api/admin/teams/{teamId}/submissions（admin） */
 async function teamSubmissions(teamId: string): Promise<ApiResult> {
   const teamRes = await ddb().send(
@@ -612,6 +772,11 @@ export const handler = async (event: ApiEvent): Promise<ApiResult> =>
     if (method === "GET" && path === "/api/admin/summary") {
       requireAuth(event, "admin");
       return summary();
+    }
+
+    if (method === "GET" && path === "/api/admin/report") {
+      requireAuth(event, "admin");
+      return report();
     }
 
     const teamSubmissionsMatch = path.match(/^\/api\/admin\/teams\/([^/]+)\/submissions$/);
