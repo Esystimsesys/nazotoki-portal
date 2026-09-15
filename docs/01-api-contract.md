@@ -186,13 +186,13 @@
 - 回答記録を**全件削除**する。res 200: `{ "ok": true, "deleted": number }`。チームと問題は削除しない。
 - 同じ問題・同じチームで本番をやり直すとき（リハーサル後の片付けなど）に使う。復元できないため、画面側では確認ダイアログを必須にしている。
 
-**GET /api/admin/analysis**（イベント後の振り返り用）
+**GET /api/admin/analysis**（イベント中の到達状況・終了後の振り返り用）
 - res 200: `{ "teams": [{teamId, teamName}], "problems": [...], "wrongAnswerProblems": [...] }`
 - `problems[]`: `{ problemId, label, enabled, solvedTeamIds[], wrongTeamIds[] }`。同じチームが両方に入りうる（4択で正解と他の選択肢の両方を入力した場合）。
 - `wrongAnswerProblems[]`: `{ problemId, label, wrongChoiceCount, wrongAnswerCount, teamCount, totalPenalty }`。**不正解の選択肢を持つ問題のみ**を問題番号順で返す。誤答0回の問題も含める（用意したのに誰も間違えなかったことが分かるのが目的）。
   - `wrongChoiceCount` は登録されている不正解パターンの数。**減点の有無は問わない**（減点0の不正解も誤答として数える）。
   - パターン単位ではなく問題単位で集約する。4択なら3つが不正解という作りになるため、パターンごとに並べても同じ問題の選択肢が複数行に散るだけで読み取れることが増えないため。
-- ポーリングしない想定。問題数×チーム数の配列を返すため、`summary` とは別にして必要なときだけ取得する。
+- ダッシュボード表示中は10秒ごとに再取得する（非表示タブでは停止）。問題数×チーム数の配列を返すため、`summary` とは別にして到達状況を表示する画面からのみ取得する。
 
 **GET /api/admin/timeline**（賞金推移）
 - res 200: `{ "series": [{ teamId, teamName, total, points: [{at, total}] }], "startedAt": string|null, "endedAt": string|null }`

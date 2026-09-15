@@ -38,8 +38,7 @@ function StatCard({ label, value }: { label: string; value: string }) {
 export function AdminDashboardPage() {
   // イベント進行中は参加者の回答が随時入るため、画面を開いている間は自動更新する。
   // 手動リロードしないと順位が止まって見えるのを防ぐのが目的。
-  // 10秒間隔なら「ほぼリアルタイム」に見えつつ、DynamoDBの読み取り回数は
-  // 1時間あたり360回程度に収まりコストは無視できる（オンデマンド課金）。
+  // 順位・到達状況・賞金推移は10秒間隔で更新する。
   // タブが非表示のときは更新しない（見ていない画面のために課金しない）。
   const { data, isLoading, isError, error, dataUpdatedAt, isFetching } = useQuery({
     queryKey: ["admin", "summary"],
@@ -51,11 +50,12 @@ export function AdminDashboardPage() {
   const [selectedTeam, setSelectedTeam] = useState<{ teamId: string; teamName: string } | null>(null);
   const [clearOpen, setClearOpen] = useState(false);
 
-  // 振り返り用の集計。問題数×チーム数ぶんの配列が返るのでポーリングはしない
-  // （イベント中に刻々と変わる情報ではなく、開いたときに見れば足りる）
+  // 到達状況と誤答は回答のたびに変わるため、順位表と同じ間隔で追いかける。
   const { data: analysisData } = useQuery({
     queryKey: ["admin", "analysis"],
     queryFn: () => submissionsApi.analysis(),
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: false,
   });
 
   // 賞金推移。順位表と同じ間隔で追いかける

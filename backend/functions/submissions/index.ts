@@ -388,16 +388,15 @@ async function timeline(): Promise<ApiResult> {
 /**
  * GET /api/admin/analysis（admin）
  *
- * イベント後の振り返り用。次回の問題数・難易度・選択肢の作り方を決める材料を返す。
+ * イベント中の到達状況と終了後の振り返りに使う集計を返す。
  *
  * - 問題ごとに「どのチームが正解したか」「どのチームが誤答したか」
  *   → 到達状況の格子と、解かれなかった問題の把握に使う
  * - 問題ごとの誤答の回数（パターン単位ではなく問題単位）
  *   → どの問題で誤答が出たか、誰も間違えなかったかの判定に使う
  *
- * 集計はダッシュボードと同じスキャンで足りるが、問題数×チーム数ぶんの配列を
- * 毎回のポーリングに載せると無駄なので、summary とは別のエンドポイントにして
- * 必要なときだけ取りに行く。
+ * チーム×問題の配列はsummaryより大きいため、到達状況を表示する
+ * ダッシュボードからのみ取得する。
  */
 async function analysis(): Promise<ApiResult> {
   const [teamsRaw, { problems, patterns }, submissionsRaw] = await Promise.all([
