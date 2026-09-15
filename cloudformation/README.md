@@ -16,12 +16,12 @@ cloudformation/
 │   ├── test-oidc.py             # OIDC信頼条件の回帰テスト（PyYAMLが必要）
 │   └── lint.sh                 # cfn-lint（rain独自タグをダミー値に置換してから実行）
 ├── buildspec-backend.yaml      # 旧CodeBuild用（現行Actionsは使用しない）
-├── buildspec-frontend.yaml     # CodeBuild: viteビルド → S3 sync → invalidation
+├── buildspec-frontend.yaml     # 旧CodeBuild用（現行Actionsは使用しない）
 └── templates/apne1/
     ├── nazotoki-cfn-dynamodb.yaml    # 4テーブル（Teams/Problems/Submissions/Admins）、全てPAY_PER_REQUEST
     ├── nazotoki-cfn-lambda-api.yaml  # Lambda 4関数 / HTTP API（Authorizerなし）/ 関数別実行ロール
     ├── nazotoki-cfn-cloudfront.yaml  # フロントエンドS3(OAC) + ディストリビューション + SPA用CF Function
-    └── nazotoki-cfn-code.yaml        # CI/CD（CodeCommit + CodeBuild×2 + CodePipeline）※templates.confには含めない
+    └── nazotoki-cfn-code.yaml        # GitHub Actions用OIDCデプロイロール（templates.conf対象外）
 ```
 
 アプリケーションスタックは3つ（`templates.conf` で管理。ekiden-portalの6スタックからCognito・独立S3スタックを省略した簡略版）:
@@ -73,7 +73,7 @@ aws s3 sync dist/ "s3://${FRONTEND_BUCKET}/" --delete
 aws cloudfront create-invalidation --distribution-id "${DISTRIBUTION_ID}" --paths "/*"
 ```
 
-- 公開URLは `nazotoki-cfn-cloudfront` スタックのOutput `AppUrl` で確認できる。
+- デプロイ先URLは `nazotoki-cfn-cloudfront` スタックのOutput `AppUrl` で確認できる。固定のURLとしてREADMEには記載しない。
 
 ## 初期管理者ユーザーの投入
 
@@ -124,7 +124,7 @@ DynamoDBの `Query` をGSIに対して実行するにはテーブルARN自体だ
 
 `nazotoki-cfn-lambda-api.yaml` には `PUT /api/admin/problems/{problemId}/enabled`（個別切替）と `PUT /api/admin/problems/enabled`（一括切替）の両方のルートを同居させている。HTTP API（API Gateway v2）のルート解決は同じ位置にリテラルセグメントとパス変数が競合する場合、**リテラル一致を優先**する仕様のため、`enabled` という固定パスは `{problemId}` 側に吸収されず正しく一括切替Lambda呼び出しに解決される。
 
-**2026-07-25の実デプロイで疎通確認済み**（`PUT /api/admin/problems/enabled` が200を返し、全問題が一括無効化された）。加えてLambda側（`functions/problems/index.ts`）でも一括ルートを `{problemId}` の正規表現より先に判定しているため、仮にAPI Gatewayのルート解決が期待と異なっても誤動作しない二重の防御になっている。
+Lambda側（`functions/problems/index.ts`）でも一括ルートを `{problemId}` の正規表現より先に判定している。API Gatewayのルート解決とLambdaの経路判定の両方で、一括切替を個別切替より優先する。
 
 ## cfn-lint
 
@@ -134,7 +134,7 @@ DynamoDBの `Query` をGSIに対して実行するにはテーブルARN自体だ
 ./scripts/lint.sh    # 全テンプレートを cfn-lint（rainタグのみ置換して検査）
 ```
 
-現時点で全テンプレートがエラー・警告ともに0件でパスすることを確認済み（本リポジトリの検証環境: cfn-lint 1.46.0）。
+検査結果は `./scripts/lint.sh` を実行して確認する。
 
 ## CI/CD（GitHub Actions + OIDC）
 
@@ -154,14 +154,8 @@ rain deploy -r ap-northeast-1 templates/apne1/nazotoki-cfn-code.yaml nazotoki-cf
 
 信頼条件は `StringEquals` で所有者・リポジトリ・mainブランチを完全一致させる。
 名前末尾のワイルドカードは、別所有者や別リポジトリも許可するため使用しない。
-2026-09-07にGitHub APIから確認したIDは owner `47743231`、repository `1335049150`。
-同日の設定APIは `use_immutable_subject=false` を返す一方、過去の記録はID付き形式のため、
-以下の2形式をそれぞれ完全一致で許可する。
-
-- `repo:Esystimsesys/nazotoki-portal:ref:refs/heads/main`
-- `repo:Esystimsesys@47743231/nazotoki-portal@1335049150:ref:refs/heads/main`
-
-名前変更・移管・リポジトリ再作成時は、名前とIDを確認してパラメータを更新する。
+テンプレートはこのリポジトリのmainブランチに対し、GitHub OIDCの標準形式とID付き形式の2値を完全一致で許可する。所有者・リポジトリ名とIDはテンプレートのパラメータで指定する。
+名前変更・移管・リポジトリ再作成時は、現在の名前とIDを確認してパラメータを更新する。
 反映後はmainのActionsで認証を確認する。旧版Lambdaと新版Lambdaが混在した状態で
 イベント回答を受け付けないよう、回答受付を停止した状態でバックエンドを更新する。
 

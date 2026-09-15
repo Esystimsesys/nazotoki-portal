@@ -84,9 +84,8 @@ Resources:
                 # Guards against the "confused deputy" case where some other
                 # GitHub workflow presents a token to this role.
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                # GitHub reports use_immutable_subject=false (2026-09-07), while
-                # earlier deployment notes describe the ID-bearing format. Allow
-                # both exact subjects; never wildcard owner/repository names.
+                # Allow both exact GitHub OIDC subject formats; never wildcard
+                # owner/repository names. Verify parameter defaults before deploy.
                 # https://docs.github.com/en/actions/reference/security/oidc
                 token.actions.githubusercontent.com:sub:
                   - !Sub repo:${GitHubOwner}/${GitHubRepo}:ref:refs/heads/${GitHubBranch}
