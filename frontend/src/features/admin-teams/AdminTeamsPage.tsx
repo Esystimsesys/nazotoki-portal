@@ -17,14 +17,20 @@ import type { Team, TeamInput } from "../../api/types";
 import { ApiErrorAlert } from "../../shared/components/ApiErrorAlert";
 import { ConfirmDialog } from "../../shared/components/ConfirmDialog";
 import { NeonPanel } from "../../shared/components/NeonPanel";
-import { formatDate } from "../../shared/format";
+import { formatDate, formatDateTime } from "../../shared/format";
 import { TeamFormModal } from "./TeamFormModal";
 
 const QUERY_KEY = ["admin", "teams"];
 
 export function AdminTeamsPage() {
   const queryClient = useQueryClient();
-  const { data, isLoading, isError, error } = useQuery({ queryKey: QUERY_KEY, queryFn: () => teamsApi.list() });
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: QUERY_KEY,
+    queryFn: () => teamsApi.list(),
+    // 受付中はこのタブを開いたまま参加者のログインを待つため、自動で最新化する
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: false,
+  });
 
   const [newTeamOpen, setNewTeamOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Team | null>(null);
@@ -78,6 +84,7 @@ export function AdminTeamsPage() {
   });
 
   const teams = data?.teams ?? [];
+  const loggedInCount = teams.filter((team) => team.lastLoginAt).length;
 
   return (
     <Box>
@@ -95,6 +102,18 @@ export function AdminTeamsPage() {
           <Typography sx={{ fontSize: 12, color: "text.secondary", mt: 0.25 }}>
             共有ログインコードを配布して参加者にログインしてもらいます。
           </Typography>
+          {teams.length > 0 && (
+            <Typography sx={{ fontSize: 12, mt: 0.5, fontWeight: 700 }} component="div">
+              ログイン済み{" "}
+              <Box
+                component="span"
+                sx={{ color: loggedInCount === teams.length ? "success.main" : "warning.main" }}
+              >
+                {loggedInCount} / {teams.length}
+              </Box>{" "}
+              チーム
+            </Typography>
+          )}
         </Box>
         <Button
           size="small"
@@ -139,6 +158,9 @@ export function AdminTeamsPage() {
                   作成日
                 </TableCell>
                 <TableCell sx={{ color: "text.secondary", fontSize: 11.5, bgcolor: "rgba(0,0,0,0.2)" }}>
+                  最終ログイン
+                </TableCell>
+                <TableCell sx={{ color: "text.secondary", fontSize: 11.5, bgcolor: "rgba(0,0,0,0.2)" }}>
                   状態
                 </TableCell>
                 <TableCell sx={{ color: "text.secondary", fontSize: 11.5, bgcolor: "rgba(0,0,0,0.2)" }}>
@@ -149,7 +171,7 @@ export function AdminTeamsPage() {
             <TableBody>
               {teams.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6}>
+                  <TableCell colSpan={7}>
                     <Typography color="text.secondary" sx={{ textAlign: "center", py: 3 }} component="div">
                       まだチームが登録されていません。
                     </Typography>
@@ -183,6 +205,22 @@ export function AdminTeamsPage() {
                     )}
                   </TableCell>
                   <TableCell sx={{ whiteSpace: "nowrap" }}>{formatDate(team.createdAt)}</TableCell>
+                  <TableCell sx={{ whiteSpace: "nowrap" }}>
+                    {team.lastLoginAt ? (
+                      formatDateTime(team.lastLoginAt)
+                    ) : (
+                      <Chip
+                        size="small"
+                        label="未ログイン"
+                        sx={{
+                          fontWeight: 700,
+                          fontSize: 11,
+                          bgcolor: "rgba(182,169,217,0.12)",
+                          color: "text.secondary",
+                        }}
+                      />
+                    )}
+                  </TableCell>
                   <TableCell>
                     <Chip
                       size="small"

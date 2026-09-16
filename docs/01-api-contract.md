@@ -22,7 +22,7 @@
 
 ### 1. Teams テーブル（env: `TABLE_TEAMS`）
 - PK: `pk` (S) = `TEAM#<teamId>`
-- 属性: `teamId` (S), `teamName` (S), `loginCode` (S, 一意), `active` (BOOL), `createdAt` (S)
+- 属性: `teamId` (S), `teamName` (S), `loginCode` (S, 一意), `active` (BOOL), `createdAt` (S), `lastLoginAt` (S, 任意)
 - GSI: `LoginCodeIndex` — PK: `loginCode` (S)（ログイン時のコード→チーム解決に使用）
 
 ### 2. Problems テーブル（env: `TABLE_PROBLEMS`）— 問題メタ＋回答パターンを単一テーブルで保持
@@ -83,11 +83,13 @@
 - req: `{ "loginCode": string }`
 - res 200: `{ "token": string, "team": { "teamId": string, "teamName": string } }`
 - res 401: コード不一致、または `active=false`。
+- 成功時にチーム行の `lastLoginAt` を現在時刻で更新する（管理者が受付の進捗を見るため）。この更新は `attribute_exists(pk)` 条件付きで、失敗してもエラーを返さずログインは成功させる（記録は補助情報で、受付中に参加者が入れなくなる方が損害が大きい）。
 
 ### チーム管理（admin）
 
 **GET /api/admin/teams** → res 200: `{ "teams": Team[] }`
-- `Team = { teamId, teamName, loginCode, active, createdAt, note? }`
+- `Team = { teamId, teamName, loginCode, active, createdAt, note?, lastLoginAt? }`
+- `lastLoginAt` は最終ログイン日時。一度もログインしていないチームではキー自体が省略される。コード再発行・無効化/再有効化では消さない。
 - `note` は管理者向けメモ（メンバー名の控えなど）。未設定のチームではキー自体が省略される。参加者向けのレスポンスには一切含めない。
 
 **POST /api/admin/teams**
