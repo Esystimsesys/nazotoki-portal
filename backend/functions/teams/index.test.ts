@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../../shared/dynamo";
 import { handler } from "./index";
 
@@ -17,6 +17,13 @@ const putEvent = (teamId: string, body: unknown) => ({
   requestContext: { http: { method: "PUT", path: `/api/admin/teams/${teamId}` } },
 });
 
+/** POST /api/auth/team-login のイベント */
+const loginEvent = (loginCode: unknown) => ({
+  rawPath: "/api/auth/team-login",
+  body: JSON.stringify({ loginCode }),
+  requestContext: { http: { method: "POST", path: "/api/auth/team-login" } },
+});
+
 /** PUT /api/admin/teams/{teamId}/active のイベント */
 const activeEvent = (teamId: string, body: unknown) => ({
   rawPath: `/api/admin/teams/${teamId}/active`,
@@ -27,10 +34,13 @@ const activeEvent = (teamId: string, body: unknown) => ({
 /** 更新されたアイテム。存在しないteamIdは条件チェック失敗として扱う */
 let stored: Record<string, unknown> | null;
 let updateInputs: UpdateCommand["input"][];
+/** ログイン記録の更新で投げさせるエラー（nullなら成功させる） */
+let loginUpdateError: Error | null;
 
 beforeEach(() => {
   process.env.TABLE_TEAMS = "teams";
   updateInputs = [];
+  loginUpdateError = null;
   stored = { pk: "TEAM#team-1", teamId: "team-1", teamName: "旧チーム名", loginCode: "ABC123", active: true, createdAt: "2026-01-01T00:00:00.000Z", note: "旧メモ" };
   send.mockImplementation(async (command: unknown) => {
     if (command instanceof UpdateCommand) {
@@ -40,7 +50,10 @@ beforeEach(() => {
       }
       const values = command.input.ExpressionAttributeValues!;
       const next: Record<string, unknown> = { ...stored };
-      if (command.input.UpdateExpression === "SET active = :active") {
+      if (command.input.UpdateExpression === "SET lastLoginAt = :now") {
+        if (loginUpdateError) throw loginUpdateError;
+        next.lastLoginAt = values[":now"];
+      } else if (command.input.UpdateExpression === "SET active = :active") {
         next.active = values[":active"];
       } else {
         next.teamName = values[":teamName"];
@@ -48,6 +61,11 @@ beforeEach(() => {
         else next.note = values[":note"];
       }
       return { Attributes: next };
+    }
+    if (command instanceof QueryCommand) {
+      // LoginCodeIndex（ProjectionType: ALL）でコード→チームを引く
+      const loginCode = command.input.ExpressionAttributeValues![":loginCode"];
+      return { Items: stored && stored.loginCode === loginCode ? [stored] : [] };
     }
     throw new Error("Unexpected command");
   });
@@ -155,5 +173,52 @@ describe("PUT /api/admin/teams/{teamId}/active", () => {
     const res = await handler(activeEvent("missing", { active: true }) as never);
 
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("POST /api/auth/team-login", () => {
+  it("ログインに成功すると lastLoginAt を更新する（管理者が受付の進捗を見るため）", async () => {
+    const res = await handler(loginEvent("ABC123") as never);
+
+    expect(res.statusCode).toBe(200);
+    expect(updateInputs).toHaveLength(1);
+    expect(updateInputs[0]).toMatchObject({
+      Key: { pk: "TEAM#team-1" },
+      UpdateExpression: "SET lastLoginAt = :now",
+      // 更新はチーム行が残っているときだけ。完全削除と競合しても幽霊行を作らない
+      ConditionExpression: "attribute_exists(pk)",
+    });
+    expect(updateInputs[0].ExpressionAttributeValues![":now"]).toMatch(
+      /^\d{4}-\d{2}-\d{2}T/,
+    );
+  });
+
+  it("小文字・前後の空白を正規化してから照合する", async () => {
+    const res = await handler(loginEvent("  abc123  ") as never);
+
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("ログイン記録の更新に失敗してもログインは成功させる（記録は補助情報のため）", async () => {
+    loginUpdateError = Object.assign(new Error("gone"), {
+      name: "ConditionalCheckFailedException",
+    });
+
+    const res = await handler(loginEvent("ABC123") as never);
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body!).token).toBe("token");
+  });
+
+  it.each([
+    ["コードが一致しない", "ZZZ999"],
+    ["無効化されたチーム", "ABC123"],
+  ])("%s なら401を返し、記録を書き込まない", async (label, loginCode) => {
+    if (label === "無効化されたチーム") stored!.active = false;
+
+    const res = await handler(loginEvent(loginCode) as never);
+
+    expect(res.statusCode).toBe(401);
+    expect(updateInputs).toHaveLength(0);
   });
 });

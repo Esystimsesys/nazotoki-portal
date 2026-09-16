@@ -1,6 +1,6 @@
 /**
  * nazotoki-teams
- * - POST   /api/auth/team-login                    チーム共有コードでログイン（team JWT発行、認証不要）
+ * - POST   /api/auth/team-login                    チーム共有コードでログイン（team JWT発行、認証不要。lastLoginAtを更新）
  * - GET    /api/admin/teams                         チーム一覧（admin）
  * - POST   /api/admin/teams                         チーム新規登録（admin）。loginCodeはサーバー自動生成
  * - PUT    /api/admin/teams/{teamId}                チーム名・メモの更新（admin）
@@ -39,6 +39,8 @@ interface TeamItem {
   createdAt: string;
   /** 管理者向けメモ（メンバー名など）。未設定なら属性自体を持たない */
   note?: string;
+  /** 最終ログイン日時。一度もログインしていないチームは属性自体を持たない */
+  lastLoginAt?: string;
 }
 
 interface Team {
@@ -48,6 +50,7 @@ interface Team {
   active: boolean;
   createdAt: string;
   note?: string;
+  lastLoginAt?: string;
 }
 
 function toTeam(item: TeamItem): Team {
@@ -58,6 +61,7 @@ function toTeam(item: TeamItem): Team {
     active: item.active,
     createdAt: item.createdAt,
     ...(item.note !== undefined ? { note: item.note } : {}),
+    ...(item.lastLoginAt !== undefined ? { lastLoginAt: item.lastLoginAt } : {}),
   };
 }
 
@@ -127,6 +131,30 @@ async function generateUniqueLoginCode(): Promise<string> {
   throw new Error("ログインコードの生成に失敗しました（衝突が続きました）");
 }
 
+/**
+ * 最終ログイン日時を記録する（管理者がチーム管理タブで受付の進捗を見るため）。
+ *
+ * 失敗してもログインは成功させる。ログイン記録は補助情報でしかなく、受付中にこの書き込みの
+ * 失敗で参加者が入れなくなる方が損害が大きい。`attribute_exists(pk)` を付けているのは、
+ * UpdateItem が行の無いキーに対して新規作成してしまうため。GSIの読み取りと更新の間に
+ * チームが完全削除されていた場合に、pkとlastLoginAtしか持たない行がチーム一覧へ現れるのを防ぐ。
+ */
+async function recordTeamLogin(teamId: string): Promise<void> {
+  try {
+    await ddb().send(
+      new UpdateCommand({
+        TableName: requiredEnv("TABLE_TEAMS"),
+        Key: { pk: `TEAM#${teamId}` },
+        UpdateExpression: "SET lastLoginAt = :now",
+        ConditionExpression: "attribute_exists(pk)",
+        ExpressionAttributeValues: { ":now": new Date().toISOString() },
+      }),
+    );
+  } catch (e) {
+    console.error("ログイン記録の更新に失敗しました", { teamId, error: e });
+  }
+}
+
 /** POST /api/auth/team-login（認証不要） */
 async function teamLogin(event: ApiEvent): Promise<ApiResult> {
   const body = getJsonBody(event);
@@ -145,6 +173,8 @@ async function teamLogin(event: ApiEvent): Promise<ApiResult> {
   if (!team || !team.active) {
     return err(401, "ログインコードが正しくないか、無効化されたチームです");
   }
+
+  await recordTeamLogin(team.teamId);
 
   const token = signToken({ role: "team", teamId: team.teamId, teamName: team.teamName });
   return ok({ token, team: { teamId: team.teamId, teamName: team.teamName } });

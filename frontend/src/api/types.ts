@@ -8,6 +8,8 @@ export interface Team {
   createdAt: string;
   /** 管理者向けメモ（メンバー名など）。参加者には表示しない。未設定なら省略される */
   note?: string;
+  /** 最終ログイン日時。一度もログインしていないチームでは省略される */
+  lastLoginAt?: string;
 }
 
 /** POST /admin/teams・PUT /admin/teams/{teamId} のリクエストボディ */
