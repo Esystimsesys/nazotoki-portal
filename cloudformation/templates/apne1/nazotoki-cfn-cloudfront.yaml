@@ -90,6 +90,13 @@ Resources:
   # 読み込むため、style-src に fonts.googleapis.com、font-src に fonts.gstatic.com を許可する。
   # スタイルシートは googleapis から、実体のフォントファイルは gstatic から配信されるため
   # 2つのドメインが要る（片方だけだと読み込みが止まる）。
+  #
+  # worker-src に blob: が要るのは結果レポート（Excel）の書き出しのため。write-excel-file が
+  # 使う fflate は、zip に入れる個々のファイルが 160KB を超えると blob: URL の Web Worker で
+  # 圧縮する。worker-src 未指定だと script-src 'self' へフォールバックして blob: が拒否され、
+  # しかも Worker の生成は例外ではなく error イベントで失敗するため（fflate は onerror を
+  # 張っていない）コールバックが永久に呼ばれず、画面が「レポート作成中…」のまま止まる。
+  # 回答が 150 件程度までは同期圧縮になるので再現せず、本番規模でだけ表面化する。
   securityHeadersPolicy:
     Type: AWS::CloudFront::ResponseHeadersPolicy
     Properties:
@@ -100,6 +107,7 @@ Resources:
             ContentSecurityPolicy: >-
               default-src 'self';
               script-src 'self';
+              worker-src 'self' blob:;
               style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
               img-src 'self' data:;
               font-src 'self' data: https://fonts.gstatic.com;

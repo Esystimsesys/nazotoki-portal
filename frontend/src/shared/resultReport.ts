@@ -373,10 +373,31 @@ export function resultReportFilename(now = new Date()): string {
   return `nazotoki-result-report-${now.getFullYear()}${part(now.getMonth() + 1)}${part(now.getDate())}-${part(now.getHours())}${part(now.getMinutes())}.xlsx`;
 }
 
+/**
+ * 書き出しが終わらないまま黙って止まるのを防ぐ。write-excel-file が内部で使う fflate は
+ * 大きめのシートを blob: URL の Web Worker で圧縮するが、Worker の生成失敗（CSP で
+ * blob: が拒否される等）は例外ではなく error イベントで通知され、fflate はそれを拾わない。
+ * その場合コールバックが永久に呼ばれず、呼び出し側は「作成中」のまま固まる。
+ * 実測では本番規模（回答700件超）でも1秒未満で終わるため、超過は異常とみなして失敗させる。
+ */
+const REPORT_TIMEOUT_MS = 30_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error("レポートの書き出しが完了しませんでした。ページを再読み込みしてやり直してください。"));
+    }, ms);
+    promise.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+}
+
 export async function downloadResultReport(report: ReportResponse): Promise<void> {
   const { default: writeXlsxFile } = await import("write-excel-file/browser");
-  await writeXlsxFile(buildResultReportSheets(report), {
-    fontFamily: "Arial",
-    fontSize: 10,
-  }).toFile(resultReportFilename());
+  await withTimeout(
+    writeXlsxFile(buildResultReportSheets(report), {
+      fontFamily: "Arial",
+      fontSize: 10,
+    }).toFile(resultReportFilename()),
+    REPORT_TIMEOUT_MS,
+  );
 }
